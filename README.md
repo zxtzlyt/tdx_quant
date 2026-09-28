@@ -90,10 +90,14 @@ tdx_quant/
 │   ├── __init__.py               # 包入口, 导出 TqClient / read_series 等
 │   ├── tq_client.py              # TQ HTTP JSON-RPC 客户端(自动分页续取)
 │   ├── cw_fields.py              # 财务字段注册表(锚定校准/单位/单季陷阱/缺失登记)
+│   ├── lday.py                   # 日线文件解析与合并同步
 │   └── gpcw.py                   # 专业财务文件解析器(历史序列/单季差分/目录同步)
 ├── examples/                     # 可运行示例
 │   ├── macd_demo.py              # 取K线 + Python 自算 MACD
 │   └── financial_demo.py         # 财务历史序列示例
+├── tests/                        # 实测用例(pytest)
+│   ├── test_offline.py           # 解析/mock 逻辑, 不依赖客户端在线
+│   └── test_live.py              # TQ 在线接口(服务离线时自动整组跳过)
 ├── scripts/                      # 镜像维护工具
 │   ├── crawl_tdx_docs.py         # 官方文档镜像爬虫
 │   ├── gen_index.py              # 总索引生成
