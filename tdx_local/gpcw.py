@@ -68,6 +68,8 @@ def close_enough(a, b, rel=FLOAT32_REL_TOL) -> bool:
 
     例: close_enough(86228148224.0, 86228146421.62) -> True
     (float32 存 862 亿级净利时尾数含数千元噪声, == 判等必失败)。
+    注意: 与公开财报的四舍五入锚值(一般 2 位小数)比较时, 1e-6 相对容差不够
+    (如 205.283 vs 锚值 205.28), 需自行放宽为绝对容差 abs(a-b) < 0.005。
     """
     if a is None or b is None:
         return a is None and b is None
@@ -76,11 +78,31 @@ def close_enough(a, b, rel=FLOAT32_REL_TOL) -> bool:
     return abs(a - b) <= rel * scale
 
 
+# (绝对路径, mtime_ns, size) -> (报告期, {代码: float元组})。
+# read_series/cumulative/single_quarters 链路会对同一批报告期文件反复解析,
+# 2026-09-29 实测单次全量解析约 7~10s, 缓存后同进程重复取数降为毫秒级。
+_PARSE_CACHE: dict = {}
+
+
 def read_gpcw(path) -> tuple:
     """读取单个 gpcw 文件。返回 (报告期YYYYMMDD字符串, {代码: [float字段...]})。
 
     占位文件抛 GpcwPlaceholder, 头部/数据区异常抛 GpcwCorrupt。
+    带 (path, mtime, size) 键的进程内缓存: 返回的 stocks 为浅拷贝, 内层
+    float 元组不可变, 改动外层 dict 不影响缓存。
     """
+    abspath = os.path.abspath(path)
+    st = os.stat(abspath)
+    key = (abspath, st.st_mtime_ns, st.st_size)
+    hit = _PARSE_CACHE.get(key)
+    if hit is None:
+        hit = _parse_gpcw(abspath)
+        _PARSE_CACHE[key] = hit
+    report_date, stocks = hit
+    return report_date, dict(stocks)
+
+
+def _parse_gpcw(path) -> tuple:
     blob = Path(path).read_bytes()
     if len(blob) < MIN_VALID_SIZE:
         raise GpcwPlaceholder(
