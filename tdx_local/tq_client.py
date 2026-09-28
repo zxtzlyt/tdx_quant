@@ -151,13 +151,60 @@ class TqClient:
 
     def market_data(self, stock_list, period="1d", count=-1, start_time="", end_time="",
                     dividend_type="front", field_list=None, fill_data=True) -> dict:
-        """K线行情(自动续取分页)。count>0 取最近 n 条; count<=0 用 start/end 区间。"""
+        """K线行情(自动续取分页)。count>0 取最近 n 条; count<=0 用 start/end 区间。
+
+        2026-09-29 实测的两个服务端行为, 本方法做了客户端补救:
+          - 服务端忽略 field_list(恒返回全部字段) -> 返回前按 field_list 客户端裁剪;
+          - 本地无数据的代码返回每股空信封 {"ErrorId":"0","Value":[]} 或每股
+            ErrorId!=0, 全部静默 -> 这些代码从 Value 移入 result["_missing"]
+            ({code: 原因}), 同时剥离每股混入的 ErrorId=="0" 字段。
+        """
         params = {"stock_list": stock_list, "period": period, "count": count,
                   "start_time": start_time, "end_time": end_time,
                   "dividend_type": dividend_type, "fill_data": fill_data}
         if field_list is not None:
             params["field_list"] = field_list
-        return self.paged("get_market_data", **params)
+        result = self.paged("get_market_data", **params)
+        value = result.get("Value")
+        if isinstance(value, dict):
+            filtered, missing = {}, {}
+            for code, per in value.items():
+                if (isinstance(per, dict) and set(per) == {"ErrorId", "Value"}
+                        and isinstance(per.get("Value"), list)):
+                    missing[code] = per.get("ErrorId") or "本地无该周期数据(空信封)"
+                    continue
+                if isinstance(per, dict):
+                    err = per.get("ErrorId")
+                    if err not in (None, "0"):
+                        missing[code] = err
+                        continue
+                    per = {k: v for k, v in per.items() if k != "ErrorId"}
+                    if field_list:
+                        per = {k: v for k, v in per.items() if k in field_list}
+                filtered[code] = per
+            result["Value"] = filtered
+            if missing:
+                result["_missing"] = missing
+        return result
+
+    def divid_factors(self, stock_code: str, start_time: str = "", end_time: str = "") -> dict:
+        """分红送配 -> {除息日YYYYMMDD: 每股税前派息(元)}。
+
+        2026-09-29 实测: 返回为列式结构(result.Date/Type/Value 平行数组, 非官方
+        文档的行式 dict); Bonus 列为每10股派息(元), 此处已换算为每股; 服务端忽略
+        start_time/end_time(恒返回全历史)。Type=11 扩缩股/15 重新调整的行 Bonus
+        恒为 0, 不影响本口径; 需要送配股比例请自行走 call() 原始接口。
+        """
+        r = self.call("get_divid_factors", stock_code=stock_code,
+                      start_time=start_time, end_time=end_time)
+        dates, rows = r.get("Date") or [], r.get("Value") or []
+        out = {}
+        for d, row in zip(dates, rows):
+            try:
+                out[str(d)] = float(row[0]) / 10.0
+            except (TypeError, ValueError, IndexError):
+                continue
+        return out
 
     def snapshot(self, stock_code: str, field_list=None) -> dict:
         """实时快照(含五档)。字段平铺在 result 顶层(2026-09-29 实测,
