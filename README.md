@@ -7,8 +7,9 @@
 
 **不装 SDK、不付订阅、不爬网页** —— 用你自己的通达信终端,免费把行情和全市场财务数据搬进 Python。
 
-- 🔌 **TqClient**:通达信 TQ 本地接口(`127.0.0.1:17709`)的 Python 客户端 —— 日K/分钟线、实时五档、板块、交易日历,大结果自动分页续取
-- 📊 **gpcw 解析器**:直接解析通达信专业财务文件(`gpcw*.dat`,FN1~FN584 字段),1988 年至今全市场财务历史,免订阅
+- 🔌 **TqClient**:通达信 TQ 本地接口(`127.0.0.1:17709`)的 Python 客户端 —— 日K/分钟线、实时五档、板块、交易日历、分红送配,大结果自动分页续取;服务端陷阱(空信封静默、无效参数)已在客户端层补救
+- 📊 **gpcw 财务文件解析**:直接解析专业财务文件(`gpcw*.dat`,FN1~FN584),1988 年至今全市场财务历史,免订阅;内置真值锚定的字段注册表与累计/单季差分
+- 🗂️ **lday 日线解析与合并**:把券商定制版的全市场历史日线并入官方客户端目录,补齐"只落地看过的标的"的历史缺口
 - 📚 **131 页官方文档镜像 + 实测笔记**:官方没写透的隐藏参数、静默空返回、数据前置条件,全部记录在案
 - 🪶 **核心库零依赖**:纯标准库,克隆即用
 
@@ -20,6 +21,8 @@
 |---|---|
 | 公式引擎在 HTTP 模式下不生效,`formula_*` 全部返回空 | 指标改用 Python 自算,`TqClient` 负责可靠取数 |
 | 专业财务数据要付费订阅 | 券商定制版通达信(如国泰君安)盘后下载免费提供同格式财务文件,`gpcw.py` 直接解析 |
+| 官方客户端只落地看过的标的,历史K线不全 | 券商定制版常年盘后下载全市场 `lday`,`lday.py` 按日期并集合并(重叠日以官方侧为准) |
+| 服务端行为陷阱:后复权随窗口起点变化、`field_list` 被忽略、无数据静默返回空 | `TqClient` 在客户端层补救(`_missing`/字段裁剪/分红换算),其余逐条记录在[实测笔记](docs/LOCAL_NOTES.md) |
 | 官方文档与实际行为有出入 | [131 页接口文档完整镜像](docs/tdx-quant-docs/INDEX.md) + [实测笔记](docs/LOCAL_NOTES.md) |
 
 ## 快速开始
@@ -43,6 +46,9 @@ closes = r["Value"]["600000.SH"]["Close"]
 
 # 实时五档快照
 tq.snapshot("600000.SH")
+
+# 分红送配 -> {除息日: 每股税前派息(元)}, 已按每股换算, 总回报/股息率直接可用
+tq.divid_factors("600519.SH")   # {"20240619": 30.876, "20241220": 23.882, ...}
 ```
 
 财务历史序列(数据来自券商版通达信下载的 gpcw 文件):
@@ -58,6 +64,12 @@ python -c "from tdx_local import read_series; print(read_series('D:/券商tdx/vi
 
 完整示例见 [examples/](examples/):[macd_demo.py](examples/macd_demo.py)(取K线 + Python 自算 MACD)、[financial_demo.py](examples/financial_demo.py)(财务历史序列)。
 
+跑一遍实测用例确认环境(离线组不需要客户端;在线组在 TQ 服务不可达时自动整组跳过):
+
+```bash
+python -m pytest tests/ -v
+```
+
 ## 安装
 
 核心库零依赖,克隆后在本仓库根目录直接 import 即可:
@@ -66,7 +78,7 @@ python -c "from tdx_local import read_series; print(read_series('D:/券商tdx/vi
 git clone https://github.com/zxtzlyt/tdx_quant.git
 ```
 
-`requirements.txt`(beautifulsoup4、html2text)只在重新抓取文档镜像时才需要。
+`requirements.txt`(beautifulsoup4、html2text)只在重新抓取文档镜像时才需要;跑测试可选装 `pytest`。
 
 ## 文档
 
@@ -78,9 +90,12 @@ git clone https://github.com/zxtzlyt/tdx_quant.git
 
 1. 接口只读本地数据 —— 新标的先 `open_in_client()` 触发客户端下载,再取数
 2. `get_market_data` 大结果分页协议已在 `TqClient` 内自动合并,调用方拿到的始终是完整数据
-3. `get_stock_info` 的返回字段平铺在顶层(不在 `Value` 里),`field_list` 必须用文档精确字段名
-4. `get_financial_data` 需要文档未记载的 `table_list`/`report_type` 参数,且数值通道在 HTTP 模式下返回 null —— 财务数值一律走 `gpcw` 文件解析
-5. `refresh_kline` 只能喂 `get_market_data` 的缓存,喂不到公式引擎
+3. `dividend_type="back"` 以请求窗口首日为基准 —— 跨窗口拼接会算错,单窗口区间回报不受影响;跨窗口场景改用"不复权价链 + `divid_factors()` 分红再投"
+4. 本地无数据的标的静默返回空 —— `market_data()` 已把这类代码移入 `result["_missing"]`;分钟线尤其要先确认本地已落地
+5. `get_market_data` 的 `field_list` 服务端会忽略 —— `market_data()` 已在客户端按参数裁剪,并剥离每股混入的 `ErrorId`
+6. `get_stock_info` 的返回字段平铺在顶层(不在 `Value` 里),`field_list` 必须用文档精确字段名
+7. `get_financial_data` 需要文档未记载的 `table_list`/`report_type`/`start_time`/`end_time` 参数,且数值通道在 HTTP 模式下返回 null —— 财务数值一律走 `gpcw` 文件解析
+8. `refresh_kline` 只能喂 `get_market_data` 的缓存,喂不到公式引擎
 
 ## 目录结构
 
