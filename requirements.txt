@@ -1,0 +1,3 @@
+# tdx_local 本体零依赖(纯标准库)。以下仅供文档镜像爬虫 scripts/crawl_tdx_docs.py 使用:
+beautifulsoup4>=4.12
+html2text>=2024.2.26

@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.idea/
+.vscode/
+
+# 打包产物
+*.egg-info/
+dist/
+build/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 爬虫运行状态(可由 crawl_tdx_docs.py 重新生成)
+docs/tdx-quant-docs/_meta/
+
+# 个人环境脚本(写入本机 ~/.agents/skills, 不适合公开)
+scripts/personal/
+
+# 个人工具配置
+.zcode/
+docs/.obsidian/

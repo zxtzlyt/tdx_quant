@@ -1,0 +1,5 @@
+# 统一行尾: 仓库内文本文件一律 LF, 避免跨平台克隆时的 CRLF/LF 混乱
+* text=auto
+*.py text
+*.md text
+*.txt text
