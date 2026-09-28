@@ -87,9 +87,10 @@ git clone https://github.com/zxtzlyt/tdx_quant.git
 ```
 tdx_quant/
 ├── tdx_local/                    # 核心包(纯标准库, 零依赖)
-│   ├── __init__.py               # 包入口, 导出 TqClient / read_series
+│   ├── __init__.py               # 包入口, 导出 TqClient / read_series 等
 │   ├── tq_client.py              # TQ HTTP JSON-RPC 客户端(自动分页续取)
-│   └── gpcw.py                   # 专业财务文件解析器(FN1~FN584, 历史序列)
+│   ├── cw_fields.py              # 财务字段注册表(锚定校准/单位/单季陷阱/缺失登记)
+│   └── gpcw.py                   # 专业财务文件解析器(历史序列/单季差分/目录同步)
 ├── examples/                     # 可运行示例
 │   ├── macd_demo.py              # 取K线 + Python 自算 MACD
 │   └── financial_demo.py         # 财务历史序列示例
