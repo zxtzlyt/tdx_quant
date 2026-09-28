@@ -86,23 +86,23 @@ git clone https://github.com/zxtzlyt/tdx_quant.git
 
 ```
 tdx_quant/
-├── tdx_local/                # 核心包(纯标准库, 零依赖)
-│   ├── __init__.py           # 包入口, 导出 TqClient / read_series
-│   ├── tq_client.py          # TQ HTTP JSON-RPC 客户端(自动分页续取)
-│   └── gpcw.py               # 专业财务文件解析器(FN1~FN584, 历史序列)
-├── examples/                 # 可运行示例
-│   ├── macd_demo.py          # 取K线 + Python 自算 MACD
-│   └── financial_demo.py     # 财务历史序列示例
-├── scripts/                  # 镜像维护工具
-│   ├── crawl_tdx_docs.py     # 官方文档镜像爬虫
-│   ├── gen_index.py          # 总索引生成
+├── tdx_local/                    # 核心包(纯标准库, 零依赖)
+│   ├── __init__.py               # 包入口, 导出 TqClient / read_series
+│   ├── tq_client.py              # TQ HTTP JSON-RPC 客户端(自动分页续取)
+│   └── gpcw.py                   # 专业财务文件解析器(FN1~FN584, 历史序列)
+├── examples/                     # 可运行示例
+│   ├── macd_demo.py              # 取K线 + Python 自算 MACD
+│   └── financial_demo.py         # 财务历史序列示例
+├── scripts/                      # 镜像维护工具
+│   ├── crawl_tdx_docs.py         # 官方文档镜像爬虫
+│   ├── gen_index.py              # 总索引生成
 │   ├── normalize_code_blocks.py  # 代码块离线重排(Tab/缩进/签名对齐)
-│   └── audit_docs.py         # 镜像体检(结构/表格/链接全量检查)
-├── docs/                     # 文档
-│   ├── LOCAL_NOTES.md        # 本机实测笔记(先读这个)
-│   └── tdx-quant-docs/       # 官方文档镜像(131页) + INDEX.md
-├── requirements.txt          # 仅文档镜像爬虫需要; 核心库零依赖
-├── LICENSE                   # MIT; docs/tdx-quant-docs/ 版权归通达信
+│   └── audit_docs.py             # 镜像体检(结构/表格/链接全量检查)
+├── docs/                         # 文档
+│   ├── LOCAL_NOTES.md            # 本机实测笔记(先读这个)
+│   └── tdx-quant-docs/           # 官方文档镜像(131页) + INDEX.md
+├── requirements.txt              # 仅文档镜像爬虫需要; 核心库零依赖
+├── LICENSE                       # MIT; docs/tdx-quant-docs/ 版权归通达信
 └── README.md
 ```
 
