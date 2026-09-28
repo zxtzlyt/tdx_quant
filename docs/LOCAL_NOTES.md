@@ -111,3 +111,42 @@ val = r['Value']['600000.SH']   # {'Date': [...], 'Open': [...], ...}
    茅台 2011→2026.09: 价格 6.71 倍(13.45%/年) vs 总回报 12.49 倍(18.22%/年);
    与 hexin 前复权比值 12.41 交叉吻合。分红事件(带日期)外部源可得,
    金额可用 `get_divid_factors` 按序核对。注意送股识别: 对比分红基准股本跳变。
+
+## 全接口实测补充(2026-09-29, 60 项用例)
+
+> 用例已固化到 `tests/`(pytest): 离线组 `test_offline.py` 不依赖客户端, 在线组
+> `test_live.py` 在 17709 不可达时自动整组跳过。运行: `python -m pytest tests/ -v`。
+> 当日实测: 57 通过 / 3 注意 / 0 失败, 据此修复 TqClient 三处静默失败(见下)。
+
+### TqClient 修复(同日)
+
+1. `call()` 无参调用时省略 `params` 键, 网关回 `-32602 "MCP参数params必须为对象"`
+   且被静默吞掉 —— `get_sector_list`/`formula_get_all` 等无参方法一直返回空。
+   现恒传 `params`(空参传 `{}`), 并对 JSON-RPC 层 `error` 显式抛 `TqError`。
+2. `snapshot()` 原从 `result.Value[code]` 取数, 当前客户端快照字段平铺在 result
+   顶层(与 `get_stock_info` 同款), 恒返回空 —— 已适配(兼容旧 Value 形态)。
+
+### 服务端行为新发现(官方文档/本笔记此前未记载)
+
+1. **`dividend_type='back'` 以请求窗口首日为基准** ⚠️: 窗口内首个除息日之前
+   back==不复权, 之后才出现差异; 换窗口起点会得到不同的"后复权"序列。
+   跨窗口拼接后复权数据会算错收益(单窗口内算区间回报不受影响)。
+2. `get_market_data` **忽略 `field_list`**(恒返回全部字段, 且每股 dict 混有
+   `ErrorId`/`Time`/`VolInStock`/`ForwardFactor`) —— 现在 `market_data()` 收尾
+   按参数客户端裁剪; 本地无数据的代码返回每股空信封
+   `{"ErrorId":"0","Value":[]}`(静默), 现移入 `result["_missing"]`。
+3. `get_stock_list` **必须 `market`+`list_type` 双参**(缺任一报
+   "参数缺少:market/list_type"): 5=全部A股 5578 / 50=沪深A股 5227 /
+   32=可转债 330 / 31=ETF基金 1732(2026-09-29 实测家数)。
+4. `get_financial_data` 除 `table_list`/`report_type` 外**还必须传
+   `start_time`/`end_time`**; 补齐后报告期日历可用(ProDataPaged), 数值通道
+   仍无 FN 字段(维持原结论)。
+5. `get_divid_factors` 返回**列式结构**(`result.Date/Type/Value` 平行数组, 非文档
+   的行式 dict), Bonus 列为**每 10 股派息(元)**, `start_time`/`end_time` 被忽略
+   (恒返回全历史)。`TqClient.divid_factors()` 已封装为 `{除息日: 每股派息元}`。
+6. 网关不支持 `get_market_snapshot_batch` 与 `get_subscribe_hq_stock_list`
+   (均 `-32601 "MCP不支持该tqcenter方法名"`); 批量快照只能循环单只。
+7. `get_stock_list_in_sector` 支持板块代码或名称两种传参, 结果一致;
+   注意 880081(轮动趋势)成份股仅 2 只 ETF, 属正常。
+8. 本地无 5m 数据的股票走 `get_market_data` 不报错, 返回空信封(见第 2 条);
+   1m 有 15840 根(600000.SH), 未超 24000 不触发分页。
