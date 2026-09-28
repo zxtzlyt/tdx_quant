@@ -33,10 +33,12 @@ class TqClient:
     # ---------- 基础调用 ----------
 
     def call(self, method: str, **params) -> dict:
-        """发送一次 JSON-RPC 请求, 返回 result 字典(原样, 不做合并)。"""
-        body = {"id": 1, "method": method}
-        if params:
-            body["params"] = params
+        """发送一次 JSON-RPC 请求, 返回 result 字典(原样, 不做合并)。
+
+        注意: params 必须始终发送(空参也传 {}), 2026-09-29 实测网关对缺
+        "params" 键的请求返回 -32602 "MCP参数params必须为对象"。
+        """
+        body = {"id": 1, "method": method, "params": params}
         req = urllib.request.Request(
             self.base_url,
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -48,6 +50,8 @@ class TqClient:
                 payload = json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise TqError(f"TQ 服务不可达({self.base_url}): {e}") from e
+        if isinstance(payload.get("error"), dict):
+            raise TqError(f"{method} JSON-RPC 错误: {payload['error']}")
         result = payload.get("result", {})
         if isinstance(result, dict) and result.get("ErrorId") not in (None, "0"):
             raise TqError(f"{method} 失败: {result.get('Error') or result}")
@@ -156,11 +160,16 @@ class TqClient:
         return self.paged("get_market_data", **params)
 
     def snapshot(self, stock_code: str, field_list=None) -> dict:
-        """实时快照(含五档)。"""
+        """实时快照(含五档)。字段平铺在 result 顶层(2026-09-29 实测,
+        与 get_stock_info 同款返回结构); 兼容旧版 Value 按 code 键控的形态。"""
         r = self.call("get_market_snapshot", stock_code=stock_code,
                       field_list=field_list or [])
-        v = r.get("Value") or {}
-        return v.get(stock_code, v)
+        v = r.get("Value")
+        if isinstance(v, dict) and v:
+            return v.get(stock_code, v)
+        meta_keys = {"ErrorId", "Error", "Msg", "run_id", "Value", "KlinePaged"}
+        flat = {k: x for k, x in r.items() if k not in meta_keys}
+        return flat
 
     def stock_info(self, stock_code: str, field_list=None) -> dict:
         """基础信息。注意: 本接口字段平铺在 result 顶层而非 Value(见 LOCAL_NOTES)。"""
