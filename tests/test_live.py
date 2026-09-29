@@ -233,9 +233,11 @@ def test_download_file_top10_holders():
 
 
 def test_financial_data_calendar_only():
-    """隐藏参数 table_list/report_type + start_time/end_time(实测必填);
-    报告期日历可用。不带 field_list 时无数值(与 tqcenter 对照一致:
-    field_list 是数值通道的必要参数, 见 LOCAL_NOTES tqcenter 对照实测)。"""
+    """隐藏参数 table_list/report_type + start_time/end_time(实测必填)。
+
+    table_list=[] 语义为"不选任何表": ErrorId=0 但 FN 数值通道全空,
+    只回 announce_time/tag_time 日历两列 —— 数值取数必须
+    table_list=field_list(2026-09-30 实测, 见 LOCAL_NOTES)。"""
     r = TQ.call("get_financial_data", stock_list=["600519.SH"],
                 table_list=[], report_type="announce_time",
                 start_time="20200101", end_time="20261231")
@@ -245,21 +247,61 @@ def test_financial_data_calendar_only():
     assert r.get("ProDataPaged") is True
 
 
-def test_financial_data_fn_channel_with_field_list():
-    """HTTP + field_list 能否打开 FN 数值通道(tqcenter 实测可开, HTTP 待验)。
+def test_financial_data_fn_numeric_channel():
+    """FN 数值通道 HTTP 可用: table_list 必须等于 field_list(2026-09-30 实测,
+    推翻此前"table_list=[] 也补齐"的结论 —— 空表即不取数)。
 
-    若服务在线后取到 FN 值 -> skip 并提示更新 LOCAL_NOTES(HTTP 可直取财务数值,
-    gpcw 降级为备份); 若仍为日历/null -> 维持"gpcw 为数值来源"的结论。"""
+    茅台 2026 中报 FN96 归母净利 445.17 亿与东财 F10 经营评述互证。"""
+    fields = ["FN1", "FN40", "FN95", "FN96", "FN107"]
     r = TQ.call("get_financial_data", stock_list=["600519.SH"],
-                field_list=["FN1", "FN4", "FN74", "FN95", "FN96"],
-                table_list=[], report_type="tag_time",
+                field_list=fields, table_list=fields,
+                report_type="tag_time",
                 start_time="20240101", end_time="20261231")
     per = (r.get("Value") or {}).get("600519.SH") or {}
-    fn_keys = [k for k in per if k.upper().startswith("FN")]
-    if fn_keys and any(v not in (None, "", 0) for k in fn_keys for v in (per[k] or [])):
-        pytest.skip("HTTP + field_list 取到了 FN 数值 —— 网关放行, 需更新 LOCAL_NOTES")
-    assert not fn_keys or all(
-        v in (None, "", 0) for k in fn_keys for v in (per[k] or []))
+    fn96 = [float(x) for x in (per.get("FN96") or []) if x not in (None, "")]
+    assert fn96, "FN 数值通道为空 —— table_list=field_list 未生效?"
+    assert max(fn96) == 86228148224.0          # 2024 年报归母净利(茅台, 元)
+    assert per.get("tag_time") and "20260630" in per["tag_time"]
+
+
+def test_gp_one_data_snapshot():
+    """红宝书 GPONEDAT 族: GO 单值快照(table_list=field_list 必填)。"""
+    r = TQ.call("get_gp_one_data", stock_list=["600000.SH"],
+                field_list=["GO1", "GO33"], table_list=["GO1", "GO33"])
+    rec = (r.get("Value") or {}).get("600000.SH") or {}
+    assert float(rec.get("GO1", 0)) == 10.0     # 浦发发行价
+    assert float(rec.get("GO33", 0)) > 0        # 最新总股本(万股)
+
+
+def test_gpjy_value_series():
+    """红宝书 GPJYVALUE 族: GP 日序列(融资余额/总市值/股息率)。"""
+    r = TQ.call("get_gpjy_value", stock_list=["600000.SH"],
+                field_list=["GP3", "GP16", "GP21"],
+                table_list=["GP3", "GP16", "GP21"],
+                start_time="20260921", end_time="20260928")
+    rec = (r.get("Value") or {}).get("600000.SH") or {}
+    gp16 = rec.get("GP16") or []
+    assert gp16 and float(gp16[-1]["Value"][0]) > 0     # 总市值(万元)
+    gp21 = rec.get("GP21") or []
+    assert gp21 and 0 < float(gp21[-1]["Value"][0]) < 100  # 股息率(%)
+
+
+def test_scjy_value_market():
+    """红宝书 SCJYVALUE 族: SC 市场序列(沪深两融余额, 万亿量级)。"""
+    r = TQ.call("get_scjy_value", field_list=["SC1"], table_list=["SC1"],
+                start_time="20260921", end_time="20260928")
+    sc1 = (r.get("Value") or {}).get("SC1") or []
+    assert sc1 and float(sc1[-1]["Value"][0]) > 1e8     # >1万亿元(口径:万元)
+
+
+def test_bkjy_value_sector():
+    """红宝书 BKJYVALUE 族: BK 板块估值(全A 市盈率TTM 整体法)。"""
+    r = TQ.call("get_bkjy_value", stock_list=["880001.SH"],
+                field_list=["BK5", "BK10"], table_list=["BK5", "BK10"],
+                start_time="20260921", end_time="20260928")
+    rec = (r.get("Value") or {}).get("880001.SH") or {}
+    bk5 = rec.get("BK5") or []
+    assert bk5 and 0 < float(bk5[-1]["Value"][0]) < 100  # PE(TTM) 合理区间
 
 
 def test_formula_engine_broken_on_http():
