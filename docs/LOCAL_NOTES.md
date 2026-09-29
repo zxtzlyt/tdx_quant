@@ -144,6 +144,8 @@ val = r['Value']['600000.SH']   # {'Date': [...], 'Open': [...], ...}
 4. `get_financial_data` 除 `table_list`/`report_type` 外**还必须传
    `start_time`/`end_time`**; 补齐后报告期日历可用(ProDataPaged), 数值通道
    仍无 FN 字段(维持原结论)。
+   ⚠️ 数值通道结论已被 2026-09-30 发现推翻: 根因是 `table_list=[]`,
+   见文末「专业财务函数族 HTTP 全通」。
 5. `get_divid_factors` 返回**列式结构**(`result.Date/Type/Value` 平行数组, 非文档
    的行式 dict), Bonus 列为**每 10 股派息(元)**, `start_time`/`end_time` 被忽略
    (恒返回全历史)。`TqClient.divid_factors()` 已封装为 `{除息日: 每股派息元}`。
@@ -179,6 +181,8 @@ val = r['Value']['600000.SH']   # {'Date': [...], 'Open': [...], ...}
    table_list/report_type/start_time/field_list 全部补齐也只回日历两列,
    数值通道在 HTTP 网关彻底关闭, "财务数值走 gpcw 文件解析"结论坐实。
    tests/test_live.py 探针保留为金丝雀: 未来客户端版本若放行会以 skip 提示。
+   ⚠️ 已被 2026-09-30 发现推翻: 当时的重试 `table_list=[]` 实为"不选任何表";
+   `table_list=field_list` 后 FN 数值全量返回, 见文末新节。
 
 ### 数据更新后的双源分叉实测(2026-09-29, 客户端下载专业财务+K线之后)
 
@@ -204,3 +208,34 @@ val = r['Value']['600000.SH']   # {'Date': [...], 'Open': [...], ...}
    (补回老历史, 重叠日以官方侧为准保住新鲜尾部); 并检查盘后下载对话框的
    下载范围设置, 避免下次下载再次截断。在测试里对应
    `test_market_data_paging_merge_consistent`(总量骤降即报警)。
+
+### 专业财务函数族 HTTP 全通(2026-09-30, 红宝书24对照实测)
+
+> 背景: 对照《红宝书24-专业财务函数》九函数编号表逐族验证。此前 FN 数值通道
+> "彻底关闭"的结论根因是隐藏参数 `table_list` 传了空表。
+
+1. **`table_list` = `field_list`(隐藏必填参数, 五族通用)**: 网关为
+   get_financial_data/get_gpjy_value/get_scjy_value/get_bkjy_value/
+   get_gp_one_data(type 1/3/5/7/9) 构造请求时要求 `table_list`;
+   传 `[]` 时 ErrorId=0 但 Value 全 null(语义="不选任何表")。
+   tqcenter 1.2.0 源码 `"table_list": field_list` 佐证 —— 与 field_list 同值。
+2. **FN 数值通道 HTTP 完全可用**(推翻 09-29 两条旧结论): 
+   `get_financial_data(stock_list, field_list=["FN1",...], table_list=同,
+   report_type="tag_time", start_time, end_time)` 返回 {代码: {FN码: [值...]}}
+   + announce_time/tag_time 平行数组。茅台 2026 中报 FN96=445.17亿 与东财 F10
+   经营评述互证; FN1/FN40/FN95/FN107 与 gpcw 解析一致。
+   gpcw 文件解析降级为离线备份与校准器, 不再是数值唯一来源。
+3. **GO 族可用**(GO 单值快照): GO1 发行价/GO3 一致预期目标价/GO26 最新解禁日/
+   GO33 最新总股本(万股)/GO34 实际流通A股, 字符串数值扁平 dict。
+4. **GP 族可用**(GP 日序列, {GP码: [{Date, Value:[N1,N2...]}]}):
+   GP3 融资余额(万元, 浦发 ~37亿)+GP4 大宗/ GP16 总市值/ GP21 股息率
+   实测正常; 注意 GP6 陆股通持股、SC2 沪深股通净买入等北向口径恒 0
+   (北向逐日披露已停, 非取数失败)。
+5. **SC 族可用**(SC 市场序列): SC1 沪深两融余额 2.58 万亿(万元口径)量级正确;
+   返回不带 ProDataPaged 包装(顶层 {SC码: [...]}), 无 stock_list 入参。
+6. **BK 族可用**(BK 板块估值): 880001(全A) BK5 市盈率TTM 整体法 20.94/
+   算术平均 35.61, BK10 板块总市值; 板块须为有估值数据的板块指数
+   (880081 轮动趋势类返回 null 属正常)。入参 stock_list=板块代码。
+7. 测试对应: test_live.py 新增 test_financial_data_fn_numeric_channel/
+   test_gp_one_data_snapshot/test_gpjy_value_series/test_scjy_value_market/
+   test_bkjy_value_sector; 原 fn_channel 金丝雀测试改断言取数成功。
