@@ -233,8 +233,9 @@ def test_download_file_top10_holders():
 
 
 def test_financial_data_calendar_only():
-    """需隐藏参数 table_list/report_type + start_time/end_time(实测新增必填);
-    报告期日历可用, 数值通道无 FN 字段。"""
+    """隐藏参数 table_list/report_type + start_time/end_time(实测必填);
+    报告期日历可用。不带 field_list 时无数值(与 tqcenter 对照一致:
+    field_list 是数值通道的必要参数, 见 LOCAL_NOTES tqcenter 对照实测)。"""
     r = TQ.call("get_financial_data", stock_list=["600519.SH"],
                 table_list=[], report_type="announce_time",
                 start_time="20200101", end_time="20261231")
@@ -242,6 +243,23 @@ def test_financial_data_calendar_only():
     assert "announce_time" in per and "tag_time" in per
     assert not [k for k in per if k.upper().startswith("FN")]
     assert r.get("ProDataPaged") is True
+
+
+def test_financial_data_fn_channel_with_field_list():
+    """HTTP + field_list 能否打开 FN 数值通道(tqcenter 实测可开, HTTP 待验)。
+
+    若服务在线后取到 FN 值 -> skip 并提示更新 LOCAL_NOTES(HTTP 可直取财务数值,
+    gpcw 降级为备份); 若仍为日历/null -> 维持"gpcw 为数值来源"的结论。"""
+    r = TQ.call("get_financial_data", stock_list=["600519.SH"],
+                field_list=["FN1", "FN4", "FN74", "FN95", "FN96"],
+                table_list=[], report_type="tag_time",
+                start_time="20240101", end_time="20261231")
+    per = (r.get("Value") or {}).get("600519.SH") or {}
+    fn_keys = [k for k in per if k.upper().startswith("FN")]
+    if fn_keys and any(v not in (None, "", 0) for k in fn_keys for v in (per[k] or [])):
+        pytest.skip("HTTP + field_list 取到了 FN 数值 —— 网关放行, 需更新 LOCAL_NOTES")
+    assert not fn_keys or all(
+        v in (None, "", 0) for k in fn_keys for v in (per[k] or []))
 
 
 def test_formula_engine_broken_on_http():

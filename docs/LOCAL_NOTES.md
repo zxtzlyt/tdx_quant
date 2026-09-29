@@ -150,3 +150,28 @@ val = r['Value']['600000.SH']   # {'Date': [...], 'Open': [...], ...}
    注意 880081(轮动趋势)成份股仅 2 只 ETF, 属正常。
 8. 本地无 5m 数据的股票走 `get_market_data` 不报错, 返回空信封(见第 2 条);
    1m 有 15840 根(600000.SH), 未超 24000 不触发分页。
+
+### tqcenter 侧对照实测(2026-09-29, 客户端内运行)
+
+客户端 tqcenter 环境: Python 3.14.3(64位), default-encoding=utf-8 但
+`open()` 文本模式默认 cp936 —— 上一版测试脚本结果文件乱码的根因
+(未显式指定 encoding, 落到 locale 首选编码); 输出文件须显式 utf-8-sig。
+
+1. **FN 数值通道在 tqcenter 模式可用**(HTTP 恒 null 定性为网关限制, 非数据缺失):
+   `get_financial_data(stock_list, field_list=["FN1","FN4","FN74","FN95","FN96"],
+   start_time, end_time, report_type="tag_time")` 返回 {代码: pd.DataFrame},
+   含 FN 值 + announce_time/tag_time, 茅台 10 个报告期齐全。
+2. **field_list 是数值通道的必要参数**(tqcenter 亦然): 缺省只回日历两列。
+3. `table_list` 是 HTTP 网关独有参数: tqcenter 下传它直接 TypeError(意外关键字)。
+4. **GO 通道可用**: `get_gp_one_data` 返回 GO1 发行价/GO3 一致预期目标价/GO5 预期EPS
+   /GO8 预期净利润(万元), 字符串数值。
+5. `get_divid_factors` 在 tqcenter 返回 pd.DataFrame(Date 索引, Bonus 为每10股,
+   与 HTTP 列式数组一一对应); **且尊重 start_time/end_time** —— HTTP 网关忽略
+   时间参数属网关行为, 非数据层行为。
+6. **gpcw 字段校准被官方通道反向验证**: tqcenter FN74(2024)=170899144704 与
+   gpcw 解析值一致; FN96(2024)=86228148224 即 close_enough 文档里的 float32
+   噪声案例原值; FN95-FN96=31.07亿 与 cw_fields 少数股东损益注记吻合;
+   FN1/FN4(2025Q3)=51.53/205.28 与锚值一致。
+7. 待办: HTTP 侧补 field_list 重试 get_financial_data —— 若网关放行, HTTP 可直取
+   财务数值(double 精度+精确公告日), gpcw 降级为备份方案; tests/test_live.py
+   已埋对应探针, 服务在线后跑 `pytest tests/test_live.py -v` 自见分晓。
