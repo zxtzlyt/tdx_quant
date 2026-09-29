@@ -22,7 +22,7 @@
 CLI 用法::
 
     python -m tdx_local.gpcw <cw目录或gpcw文件> [代码...]   # 代码不带市场后缀, 如 600519
-    python -m tdx_local.gpcw sync <源cw目录> <目标cw目录> [--dry-run]
+    python -m tdx_local.gpcw sync <源cw目录> <目标cw目录> [--only-missing] [--dry-run]
 
 数据来源提示: 支持TQ的官方金融终端下载专业财务需订阅; 部分券商定制版通达信
 (如国泰君安)的盘后下载免费提供同类文件, 目录结构与格式完全一致。
@@ -251,12 +251,18 @@ def approx_announce_date(report_date: str) -> str:
     return table[md]
 
 
-def sync_cw(src_dir: str, dst_dir: str, dry_run: bool = False) -> dict:
+def sync_cw(src_dir: str, dst_dir: str, dry_run: bool = False,
+            only_missing: bool = False) -> dict:
     """把数据源目录(如 gtja 客户端 vipdoc/cw)的财务文件同步到分析用目录。
 
     规则: 跳过 20 字节下载占位(< MIN_VALID_SIZE, `test -s` 拦不住它们);
     目标缺失或与源大小不一致时覆盖复制(保留源 mtime); 不删除目标多余文件。
     大小一致即视为最新(报告期文件一经写出不再变更)。
+    only_missing=True 只补目标缺失的报告期文件, 永不覆盖已有文件 ——
+    适用双源场景: 2026-09-29 实测官方客户端"专业财务数据"下载会自行改写
+    vipdoc/cw 的 gpcw 文件(数值更正/新增上市公司), 且与 gtja 源出现分叉
+    (8/65 个文件大小不一致, 38 条记录值不同), 此时 gtja 同步应只做补缺,
+    否则会用旧版覆盖官方新版。
     返回 {copied, up_to_date, skipped_placeholder, dry_run}。
     """
     copied, uptodate, placeholders = [], [], 0
@@ -266,9 +272,10 @@ def sync_cw(src_dir: str, dst_dir: str, dry_run: bool = False) -> dict:
             placeholders += 1
             continue
         dst = os.path.join(dst_dir, name)
-        if os.path.exists(dst) and os.path.getsize(dst) == os.path.getsize(src):
-            uptodate.append(name)
-            continue
+        if os.path.exists(dst):
+            if only_missing or os.path.getsize(dst) == os.path.getsize(src):
+                uptodate.append(name)
+                continue
         if not dry_run:
             shutil.copy2(src, dst)
         copied.append(name)
@@ -283,11 +290,14 @@ def main(argv) -> int:
         return 1
     if argv[1] == "sync":
         if len(argv) < 4:
-            print("用法: python -m tdx_local.gpcw sync <源cw目录> <目标cw目录> [--dry-run]")
+            print("用法: python -m tdx_local.gpcw sync <源cw目录> <目标cw目录> "
+                  "[--only-missing] [--dry-run]")
             return 1
-        rep = sync_cw(argv[2], argv[3], dry_run="--dry-run" in argv[4:])
+        rep = sync_cw(argv[2], argv[3], dry_run="--dry-run" in argv[4:],
+                      only_missing="--only-missing" in argv[4:])
         tag = "dry-run" if rep["dry_run"] else "完成"
-        print(f"同步{tag}: 复制 {len(rep['copied'])} 个, 已最新 {len(rep['up_to_date'])} 个, "
+        mode = "只补缺" if "--only-missing" in argv[4:] else "覆盖不一致"
+        print(f"同步{tag}({mode}): 复制 {len(rep['copied'])} 个, 已最新 {len(rep['up_to_date'])} 个, "
               f"跳过占位 {rep['skipped_placeholder']} 个")
         for name in rep["copied"]:
             print("  +", name)

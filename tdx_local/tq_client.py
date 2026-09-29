@@ -171,7 +171,9 @@ class TqClient:
             for code, per in value.items():
                 if (isinstance(per, dict) and set(per) == {"ErrorId", "Value"}
                         and isinstance(per.get("Value"), list)):
-                    missing[code] = per.get("ErrorId") or "本地无该周期数据(空信封)"
+                    missing[code] = (per.get("ErrorId") or ""
+                                     if per.get("ErrorId") not in (None, "", "0")
+                                     else "本地无该周期数据(空信封)")
                     continue
                 if isinstance(per, dict):
                     err = per.get("ErrorId")

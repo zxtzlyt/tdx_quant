@@ -182,6 +182,26 @@ def test_sync_cw_placeholder_and_idempotent(tmp_path):
 
 
 @needs_cw
+def test_sync_cw_only_missing_never_overwrites(tmp_path):
+    """only_missing 模式: 目标已有的文件即使与源大小不同也不覆盖(双源分叉场景)。"""
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    src.mkdir()
+    dst.mkdir()
+    shutil.copy2(os.path.join(CW_DIR, "gpcw20241231.dat"), src / "gpcw20241231.dat")
+    # 目标侧放一个内容不同(截短)的同名文件, 模拟"官方新版"
+    blob = open(os.path.join(CW_DIR, "gpcw20241231.dat"), "rb").read()
+    truncated = blob[:len(blob) - 4096]          # 截短但仍是合法头
+    (dst / "gpcw20241231.dat").write_bytes(truncated)
+    rep = sync_cw(str(src), str(dst), only_missing=True)
+    assert rep["copied"] == [] and len(rep["up_to_date"]) == 1
+    assert (dst / "gpcw20241231.dat").read_bytes() == truncated   # 未被覆盖
+    # 对照: 默认模式(不带 only_missing)会因大小不一致而覆盖
+    rep2 = sync_cw(str(src), str(dst))
+    assert rep2["copied"] == ["gpcw20241231.dat"]
+    assert os.path.getsize(dst / "gpcw20241231.dat") == len(blob)
+
+
+@needs_cw
 def test_cli_gpcw(tmp_path):
     env = dict(os.environ, PYTHONPATH=str(ROOT),
                PYTHONIOENCODING="utf-8")
