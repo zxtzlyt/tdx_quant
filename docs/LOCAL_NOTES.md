@@ -60,17 +60,20 @@ val = r['Value']['600000.SH']   # {'Date': [...], 'Open': [...], ...}
    补齐后**报告期日历能查**(announce_time/tag_time 列表),但 **FN/GO/GPJY 数值通道返回 null**——
    数值在 HTTP 模式下取不到,勿再深挖。
 
-2. **财务数值走本地文件解析**(国泰君安客户端免费提供,官方终端要订阅):
-   - 数据源: `D:\jyrj\gtja\vipdoc\cw\gpcwYYYYMMDD.dat`(每报告期一个文件,1988 至今,已同步到
-     `D:\jyrj\tdx\vipdoc\cw\`;gtja 客户端会持续下载更新,新文件出来后再同步一次)
+2. **财务数值走本地文件解析**:
+   - 主数据源(2026-09-29 起): 官方终端"专业财务数据"下载**直接写本客户端**
+     `vipdoc/cw/gpcwYYYYMMDD.dat`(实测数值比 gtja 源更全更新, 见下文双源分叉节),
+     分析目录即官方客户端目录, **无需再同步**
+   - gtja 的 cw 同步退役; `sync_cw --only-missing` 保留为工具, 供无订阅用户
+     用券商定制版(如国泰君安)免费文件补老历史, 或未来双源场景使用
    - 文件布局: 20字节头 `<1hI1H3L>`([1]=报告期,[2]=记录数,[3]=数据区偏移,[4]=单条字节数);
      索引区 每记录11字节 `<6s1c1L>`(代码,标志,数据偏移);每条记录 记录字节数/4 个 float32,
      字段序号即官方 FN1..FN584(含义见 03-tqcenter-财务/get_financial_data.md)
    - 解析器: `python -m tdx_local.gpcw <gpcw文件或cw目录> 600519`(也可 `from tdx_local import read_series` 读历史序列)
      (已验证:茅台 2025Q3 EPS 51.53 / 每股净资产 205.28,与公开财报一致)
-   - 注意: gtja 下载中的报告期文件是 20 字节空占位, 同步时跳过
+   - 注意: 下载中的报告期文件是 20 字节空占位, 同步时跳过
      (**`test -s` 拦不住它们——占位文件非 0 字节**; 用 `gpcw.MIN_VALID_SIZE`(>1000)
-     判断, 或直接用 `gpcw.sync_cw` 同步, 自动跳过)
+     判断, 或直接用 `gpcw.scan_reports` 核查状态)
 
 3. **免费基本面快照**:`get_stock_info` 平铺返回 34 个 J_ 字段(最新一期财务摘要:
    J_mgsy 每股收益、J_mgjzc 每股净资产、J_jly 净利润、J_ch 营收、J_gdrs 股东人数等),
