@@ -62,7 +62,7 @@ python -c "from tdx_local import read_series; print(read_series('D:/券商tdx/vi
 # FN1 基本每股收益, FN4 每股净资产
 ```
 
-完整示例见 [examples/](examples/):[macd_demo.py](examples/macd_demo.py)(取K线 + Python 自算 MACD)、[financial_demo.py](examples/financial_demo.py)(财务历史序列)。
+完整示例见 [examples/](examples/):[macd_demo.py](examples/macd_demo.py)(取K线 + Python 自算 MACD)、[financial_demo.py](examples/financial_demo.py)(财务历史序列)、[mainbusi_demo.py](examples/mainbusi_demo.py)(经营分析批量下载 + xlsx 汇总)、[http_call.py](examples/http_call.py)(不依赖 tqcenter 的本地 HTTP 直连)。
 
 跑一遍实测用例确认环境(离线组不需要客户端;在线组在 TQ 服务不可达时自动整组跳过):
 
