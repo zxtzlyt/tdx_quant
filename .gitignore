@@ -23,3 +23,7 @@ scripts/personal/
 # 个人工具配置
 .zcode/
 docs/.obsidian/
+
+# 本机工具与未公开资料
+tdx_docs/
+.zcodeignore
