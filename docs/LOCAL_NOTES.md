@@ -172,6 +172,7 @@ val = r['Value']['600000.SH']   # {'Date': [...], 'Open': [...], ...}
    gpcw 解析值一致; FN96(2024)=86228148224 即 close_enough 文档里的 float32
    噪声案例原值; FN95-FN96=31.07亿 与 cw_fields 少数股东损益注记吻合;
    FN1/FN4(2025Q3)=51.53/205.28 与锚值一致。
-7. 待办: HTTP 侧补 field_list 重试 get_financial_data —— 若网关放行, HTTP 可直取
-   财务数值(double 精度+精确公告日), gpcw 降级为备份方案; tests/test_live.py
-   已埋对应探针, 服务在线后跑 `pytest tests/test_live.py -v` 自见分晓。
+7. **HTTP + field_list 重试已做(同日客户端在线): FN 仍为 null** ——
+   table_list/report_type/start_time/field_list 全部补齐也只回日历两列,
+   数值通道在 HTTP 网关彻底关闭, "财务数值走 gpcw 文件解析"结论坐实。
+   tests/test_live.py 探针保留为金丝雀: 未来客户端版本若放行会以 skip 提示。
