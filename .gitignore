@@ -14,6 +14,12 @@ build/
 .DS_Store
 Thumbs.db
 
+# pytest 缓存(pytest 会自建 .gitignore, 此处兜底)
+.pytest_cache/
+
+# DLL 扩展工作区(个人策略源码与编译产物, 仅本机使用, 不公开)
+dll/
+
 # 爬虫运行状态(可由 crawl_tdx_docs.py 重新生成)
 docs/tdx-quant-docs/_meta/
 
@@ -27,3 +33,4 @@ docs/.obsidian/
 # 本机工具与未公开资料
 tdx_docs/
 .zcodeignore
+docs/选股分析指南.md

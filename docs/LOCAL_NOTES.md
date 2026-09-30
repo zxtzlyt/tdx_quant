@@ -239,3 +239,132 @@ val = r['Value']['600000.SH']   # {'Date': [...], 'Open': [...], ...}
 7. 测试对应: test_live.py 新增 test_financial_data_fn_numeric_channel/
    test_gp_one_data_snapshot/test_gpjy_value_series/test_scjy_value_market/
    test_bkjy_value_sector; 原 fn_channel 金丝雀测试改断言取数成功。
+
+### DataTool 盘后数据工具实测与日线全历史修复(2026-09-30 凌晨)
+
+1. **DataTool.exe**(`D:\Program Files (x86)\tdx_data_tool\v4`)是官方"深沪行情
+   数据处理工具": 纯 GUI、无任何命令行开关(exe 字符串/导入表实证);
+   `datatool.ini` 已配 `VIPDOC=D:\jyrj\tdx\vipdoc`。功能 = 盘后下载(日线包/
+   分笔包)→ 转档(.day/.01/.5/.vid+.vtc)→ 合并/检错/删除区间。任务清单存
+   `downit5.cfg`(GUI 里保存过才生成)。老脚本同款直连 URL
+   `59.175.238.39/products/data/data/{newday,2ktick}/YYYYMMDD.zip` 已失效
+   (IP 不通),现行下载地址由 GUI 内部寻址,exe 字符串中未暴露。
+2. **newday 日包是增量; 深历史要靠官网完整包**: `data.tdx.com.cn/vipdoc/hsjday.zip`
+   (526MB, 沪深京全历史含退市证券, 官网 vipdata 页: "首次安装或长时间没下日线
+   时下载, 放 vipdoc 解压覆盖")。本次**未直接覆盖**, 而是解压到独立目录后
+   `python -m tdx_local.lday sync` 全量并集合并(须关客户端, TdxW 强杀):
+   sh/sz/bj = 6130/5935/614 个文件(+1921 退市/缺失证券);
+   sz000001 由 20120104(券商源遗留缺口)修复为 19910403 上市首日起
+   (3568→8463 根); sh600519 保持 20010827; 尾根 20260929 未回退;
+   test_offline 32 passed。**今后日线全历史修复直接复跑本条即可。**
+3. **分笔→分钟管道**: 2ktick 分笔包 → DataTool 分笔转档(newtick/*.vid+*.vtc,
+   vid 是按日期索引的文件头, 每股单文件多日共存) → 分钟转档(minline/*.01
+   1分钟 + fzline/*.5 5分钟)。本机现状: 新管道数据仅 20260902~0911 共 8 日
+   (GUI 试下载), minline 另有 20260622~0807 的 35 日 .lc1 老残留。
+4. **分钟/分笔深度上限(免费官方通道)**: 客户端历史分钟下载 ~100 天
+   (datatool.ini `MINDAYS=120` 吻合), 盘后下载历史时段每次≤31 天; 分笔服务器
+   保留窗口以 DataTool GUI 日历可选范围为准(未实测)。**1 分钟补到 2020-01
+   无免费通道**: 东财 klt=1 实测仅回 1 个交易日且随后封锁本机直连;
+   gtja 侧仅 2023-05~08 共 66 日残留; 可选付费源(tushare 5000 积分/QMT/聚宽)
+   或从现在起每日盘后积累。5 分钟深历史免费可用 baostock(2011 起, 无 1 分钟)。
+5. **待办(GUI 点击, 客户端关闭状态下)**: 补满分钟 100 天窗口与分笔窗口 =
+   打开 DataTool → 分笔页勾日期区间(先选老日期试探服务器窗口) → 下载 →
+   分笔转档 → 分钟转档; 若日历拒绝老日期则按月分批勾最近可得区间。
+6. **tqs/TdxAiData 云通道(=知乎《全能实战指南》说的"数据采集插件")**:
+   PYPlugins 已部署 TdxAiData.dll 但版本旧于 user/tqserver.py 1.1.1
+   (缺 GetCallAuctionInStr 导出, 初始化即 AttributeError); PyPI
+   `pip install tdxaidata` 可用(自带配套 DLL+ini)。但调用任何接口返回
+   `[错误] Need TokenKey` —— 需登录通达信个人版商城 → 会员中心 →
+   积分和Key管理 → 创建"数据服务"Key 填入 TdxAiData.ini [Token]。
+   官方文档 tdxaidata_overview 样例注释原文: **"一分钟周期云获取方式后期
+   不做限制 不受限100天"** —— 唯一明示可突破客户端分钟 100 天上限的通道;
+   能回溯到多早(2020?)须拿到 Key 后实测 get_tick_data/get_minute_data。
+7. **tqs 云通道实测(2026-09-30, 用户提供数据服务Key)**: Key 写入 ini 后
+   认证打通 —— `get_market_data period='1d'` 正常返回(600519 近期日线);
+   但**全部分钟/分笔族接口(1m/5m/15m/30m/1h/tick/minute_data, 近期与
+   2020 日期均试)统一返回 `[错误] TokenKey Insufficient Or Key Error`**,
+   即该 Key 当前档位只含基础行情, 分钟/分笔需要商城侧开通对应数据包
+   (积分/付费规则在商城后台, 公开资料查不到)。回溯深度问题被权限问题
+   遮蔽, 开通数据包后方可实测。工具链已就绪: pip tdxaidata + ini 已配,
+   探针即本条命令行。
+8. **baostock 免费 5 分钟深历史(2026-09-30 实测, 全市场回补已启动)**:
+   `pip install baostock` 免 token。
+   - 覆盖: **沪深个股 5m 自 2020-01-02 起**(并非 2015), 指数/ETF/北交所
+     均无 5m; 单次查询可拉整区间(~78k 行/股); time 即 TDX bar 结束时刻
+     (09:35 起), 量纲 股/元 与 vipdoc 一致。
+   - **.5/.01 新代分钟文件布局(实证钉死, 与日线同日聚合交叉验证通过)**:
+     `<HH 4I f I 2H>` = 日期词(y-2004)*2048+m*100+d, 时间词 hh*60+mm,
+     开高低收×100(I), 成交额(f32 元), 成交量(I 股), pad。
+   - **吞吐与禁忌**: 默认 2000 行/页 × 39 次往返 ≈ 280s/股; 实测把
+     `BAOSTOCK_PER_PAGE_COUNT` 调大(20000/100000)会触发服务端异常
+     (小查询空响应、查询挂死), **不要改这个常量**; 同 IP 并发 >3-4 连接
+     会被整体饿死(冷却 >15 分钟), 多进程分片 ≤2-3 且慎重。
+   - ⚠️ **惩罚实测升级(2026-09-30 白天)**: 凌晨并发实验触发的 per-IP
+     惩罚持续 11h+ 未解 —— 形态为 login 秒回但 k 线查询黑洞(60s 零字节,
+     非滴流非断连); 自愈循环(探测→解封即全速开磨)常驻, 解封时间不可控,
+     可能到次日。教训: **baostock 单连接串行是铁律, 永不并发实验。**
+   - 回补脚本 `D:\temp_baostock_fill\fill_5m.py`(all [i N] 分片、done.txt
+     断点、wait_healthy 门卫、熔断、bash until 崩溃自启), 全市场 ~5400 股
+     ≈ 280s/股, 需数天后台长跑; .5 按(日期,时间)并集合并、本地优先,
+     写入原子替换, 客户端可同时读。
+
+## DLL 扩展通道实测(2026-09-30, tdx_docs 两份官方规范)
+
+> 起因: 用户要求基于 tdx_docs 两份规范(DLL函数编程规范/插件选股编程规范)整理可用指南。
+> 全部过程与使用说明沉淀在 `docs/选股分析指南.md`(仅本机, 不入库), 此处只记坑与结论。
+
+1. **官方示例 DLL 全是 32 位**: `通达信插件选股编程规范/MyPlugin64.dll` 虽名带 64,
+   PE Machine 实为 0x014C(32 位); DLL函数规范的示例干脆没带编译产物。
+   本机 TdxW.exe 是 64 位(0x8664) —— 官方示例直接部署必失败, 须自行编译。
+2. **本机 MSVC 就位但不在 PATH**: VS18 BuildTools(MSVC 14.50) 在
+   `C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\`,
+   需先 call `Common7\Tools\VsDevCmd.bat -arch=x64`; 无 gcc。
+   编译脚本 `dll/build_64bit.cmd`(编译 + dumpbin 导出自检), 产物在 `dll/out/`。
+3. **官方示例源码 5 处问题**(VC6 时代代码, 现代 MSVC 编不过/跑不对, 修正版在
+   `dll/src/`, 文件头注释有逐条说明): ① `PLUGIN_EXPORTS` 定义在 include 之后
+   → 导出函数变 dllimport, DLL 无导出表(最隐蔽); ② ParamInfo 的 nMin 误写 nMax;
+   ③ AfxRightData 的 for 作用域泄漏(C2065); ④ InputInfoThenCalc1 未防
+   nDataNum=ASK_ALL(-1) 直接 new 崩溃; ⑤ strcpy 需 _CRT_SECURE_NO_WARNINGS。
+4. **源码含中文字面量(插件名等)必须 UTF-8 BOM**: 无 BOM 时 cl 按 cp936 误读源码;
+   带 BOM 后窄字面量正确转为 GBK 字节, 通达信界面显示正常。
+5. **公式 DLL 通道端到端验证通过**: TestPluginTCale64.dll → T0002\dlls\ →
+   公式管理器 DLL函数 绑定(客户端弹"成功绑定了TestPluginTCale64.dll",
+   绑定对话框原话"64位主程序只能绑定64位DLL") → 用户公式 TESTDLL:
+   `TDXDLL1(1,H,C,C);` → 编辑器动态翻译面板解析出"第1号DLL" →
+   exec_to_tdx `zb_TESTDLL` 挂浦发银行日K副图 → 输出递增直线末值 419.00
+   (=420根K线序号, TestPlugin1 语义精确吻合)。
+6. **插件选股入口在量化模拟版已移除**: 键盘精灵 `.9` 全列只有 .905 条件选股/
+   .906 定制选股/.907 模式选股/.908 策略股票池/.909 综合选股, 无插件选股;
+   MyPlugin64.dll 已按规范部署 `D:\jyrj\tdx\Plugin\` 备而待用(标准版可用)。
+   `.908` 在本版实测=策略股票池(网上资料说的 .908=插件选股 属其它版本)。
+7. **create_sector/send_user_block 中文板块名会写坏客户端板块表**: HTTP 网关
+   对中文参数做 UTF-8→GBK 转码, "技术选股"存成了含非法字节的乱码记录,
+   get_user_sector 返回的 JSON 从此不是合法 UTF-8, urllib decode 直接炸。
+   delete_sector 对该损坏记录返回"成功"但删不掉。已修: ① TqClient.call 解码
+   errors="replace"(网关缺陷兜底); ② 配方改用英文板块简称 JXG。
+   残留乱码板块待客户端 UI 删除(自定义板块设置, 键盘精灵 .931)。
+8. **exec_to_tdx 是 GUI 自动化的最佳通道**(HTTP 可达): `breed_1#600000` 跳个股
+   (顺带把数据下载下来), `zb_MACD`/`zb_自编公式名` 挂指标到当前图 ——
+   本轮 computer use 验证公式 DLL 全靠它。客户端主界面自绘控件, 坐标点击
+   基本无效; Ctrl+T/Ctrl+F 快捷键与键盘精灵(直接打字)可靠; 弹出对话框全是
+   标准 Win32, UIA 树完整可自动化。窗口最小化(bounds 变 -48000)是一切
+   "点击无效"的元凶, 截图动作会临时还原窗口。
+9. **测试**: `tests/test_guide_examples.py` 15 用例(11 离线纯逻辑 + 4 在线端到端,
+   在线组沿用 refresh_cache 探活门控), 全部通过。配方脚本与测试互相咬合:
+   在线测试真跑配方 main()(monkeypatch 参数), 曾抓出 FN 值为字符串的实 bug。
+
+### 标准版重装后的插件选股实测(2026-09-30 上午, 用户重装 tdx64 标准版)
+
+1. **原地重装**: 同目录 D:\jyrj\tdx, TdxW.exe 0x8664, 标题从"(量化模拟)"变
+   "通达信金融终端 V7.73 标准版"; 之前部署的 Plugin\MyPlugin64.dll 与
+   T0002\dlls\TestPluginTCale64.dll 均保留; TQ 17709 仍在线。
+2. **插件选股入口在「公式」菜单下**(用户确认), 不在老规范说的"功能→选股器";
+   键盘精灵 .9 热键表仍无 .908 —— **热键表≠功能存在**, 认菜单不认热键。
+3. **自研插件① 上线**: dll/src/MyPicker/MyPicker.cpp "缩量回踩MA支撑"
+   (MA上行 + 今日量<=前5日均量*缩量% + 收盘价在MA±回踩幅度%, 四参数
+   Value[0..3]=回踩%/缩量%/均线天数/回看天数)。真 64 位(0x8664),
+   4 导出齐全, 已部署 Plugin\。新坑: LEAN_AND_MEAN 下 fabs 需显式 <math.h>。
+4. **交叉验证工作流**: 插件选股 → 选股入板块(英文简称如 HJ) →
+   `python examples/verify_pullback_picker.py HJ` 用 Python 同口径复算对账。
+5. 本会话 computer use 不可用(引导脚本路径变更报 unavailable) —— GUI 验证
+   转用户三步手动流程, 见指南 §2.4。

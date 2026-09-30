@@ -21,7 +21,7 @@
 |---|---|
 | 公式引擎在 HTTP 模式下不生效,`formula_*` 全部返回空 | 指标改用 Python 自算,`TqClient` 负责可靠取数 |
 | 专业财务数据要付费订阅 | 官方终端可直接下载专业财务数据(实测落盘 `gpcw*.dat`);无权限时可用券商定制版(如国泰君安)免费的同格式文件 —— `gpcw.py` 直接解析 |
-| 官方客户端只落地看过的标的,历史K线不全 | 券商定制版常年盘后下载全市场 `lday`,`lday.py` 按日期并集合并(重叠日以官方侧为准) |
+| 官方客户端只落地看过的标的,历史K线不全 | 券商定制版常年盘后下载全市场 `lday`,`lday.py` 按日期并集合并(重叠日以官方侧为准);深历史缺口用官网完整包 `data.tdx.com.cn/vipdoc/hsjday.zip` 补(2026-09-30 实测,见[笔记](docs/LOCAL_NOTES.md)) |
 | 服务端行为陷阱:后复权随窗口起点变化、`field_list` 被忽略、无数据静默返回空 | `TqClient` 在客户端层补救(`_missing`/字段裁剪/分红换算),其余逐条记录在[实测笔记](docs/LOCAL_NOTES.md) |
 | 官方文档与实际行为有出入 | [131 页接口文档完整镜像](docs/tdx-quant-docs/INDEX.md) + [实测笔记](docs/LOCAL_NOTES.md) |
 
@@ -64,6 +64,8 @@ python -c "from tdx_local import read_series; print(read_series('D:/券商tdx/vi
 
 完整示例见 [examples/](examples/):[macd_demo.py](examples/macd_demo.py)(取K线 + Python 自算 MACD)、[financial_demo.py](examples/financial_demo.py)(财务历史序列)、[mainbusi_demo.py](examples/mainbusi_demo.py)(经营分析批量下载 + xlsx 汇总)、[http_call.py](examples/http_call.py)(不依赖 tqcenter 的本地 HTTP 直连)。
 
+**选股/分析配方**(面向不想写代码的使用者,改文件头部参数区即可):[pick_technical.py](examples/pick_technical.py)(技术面选股+写回自定义板块)、[pick_fundamental.py](examples/pick_fundamental.py)(财报增速选股)、[market_overview.py](examples/market_overview.py)(板块强弱/全A估值/两融)、[stock_checkup.py](examples/stock_checkup.py)(单股一键体检,含分红再投总回报);DLL 插件选股的结果可用 [verify_pullback_picker.py](examples/verify_pullback_picker.py) 做 Python 同口径对账。
+
 跑一遍实测用例确认环境(离线组不需要客户端;在线组在 TQ 服务不可达时自动整组跳过):
 
 ```bash
@@ -94,8 +96,10 @@ git clone https://github.com/zxtzlyt/tdx_quant.git
 4. 本地无数据的标的静默返回空 —— `market_data()` 已把这类代码移入 `result["_missing"]`;分钟线尤其要先确认本地已落地
 5. `get_market_data` 的 `field_list` 服务端会忽略 —— `market_data()` 已在客户端按参数裁剪,并剥离每股混入的 `ErrorId`
 6. `get_stock_info` 的返回字段平铺在顶层(不在 `Value` 里),`field_list` 必须用文档精确字段名
-7. `get_financial_data` 需要文档未记载的 `table_list`/`report_type`/`start_time`/`end_time` 参数,且数值通道在 HTTP 模式下返回 null —— 财务数值一律走 `gpcw` 文件解析
+7. `get_financial_data` 需要文档未记载的 `table_list`/`report_type`/`start_time`/`end_time` 参数;**`table_list` 必须等于 `field_list`**(2026-09-30 实测推翻"HTTP 数值通道关闭"旧结论) —— 补齐后 FN 数值 HTTP 全通
 8. `refresh_kline` 只能喂 `get_market_data` 的缓存,喂不到公式引擎
+9. 64 位通达信只能加载 64 位 DLL;官方规范自带的示例 DLL 全是 32 位(含名字带 64 的)——自用需 MSVC 自行编译 64 位(实测记录见[笔记](docs/LOCAL_NOTES.md))
+10. `create_sector`/`send_user_block` 的**中文板块名**经 HTTP 会损坏客户端板块表(非法字节),板块简称用英文;`TqClient` 已对网关返回的非法 UTF-8 做容错
 
 ## 目录结构
 
@@ -109,17 +113,25 @@ tdx_quant/
 │   └── gpcw.py                   # 专业财务文件解析器(历史序列/单季差分/目录同步)
 ├── examples/                     # 可运行示例
 │   ├── macd_demo.py              # 取K线 + Python 自算 MACD
-│   └── financial_demo.py         # 财务历史序列示例
+│   ├── financial_demo.py         # 财务历史序列示例
+│   ├── mainbusi_demo.py          # 经营分析批量下载 + xlsx 汇总
+│   ├── http_call.py              # 不依赖 tqcenter 的本地 HTTP 直连
+│   ├── pick_technical.py         # 配方: 技术面选股(金叉/多头/放量, 写回自定义板块)
+│   ├── pick_fundamental.py       # 配方: 财报增速选股(HTTP FN 通道)
+│   ├── market_overview.py        # 配方: 板块强弱/全A估值/两融余额
+│   ├── stock_checkup.py          # 配方: 单股一键体检(含分红再投总回报)
+│   └── verify_pullback_picker.py # 配方: DLL 选股器×Python 同口径交叉对账
 ├── tests/                        # 实测用例(pytest)
 │   ├── test_offline.py           # 解析/mock 逻辑, 不依赖客户端在线
-│   └── test_live.py              # TQ 在线接口(服务离线时自动整组跳过)
+│   ├── test_live.py              # TQ 在线接口(服务离线时自动整组跳过)
+│   └── test_guide_examples.py    # 配方示例配套测试(离线+在线)
 ├── scripts/                      # 镜像维护工具
 │   ├── crawl_tdx_docs.py         # 官方文档镜像爬虫
 │   ├── gen_index.py              # 总索引生成
 │   ├── normalize_code_blocks.py  # 代码块离线重排(Tab/缩进/签名对齐)
 │   └── audit_docs.py             # 镜像体检(结构/表格/链接全量检查)
 ├── docs/                         # 文档
-│   ├── LOCAL_NOTES.md            # 本机实测笔记(先读这个)
+│   ├── LOCAL_NOTES.md            # 本机实测笔记(先读这个,细节与坑都在这里)
 │   └── tdx-quant-docs/           # 官方文档镜像(131页) + INDEX.md
 ├── requirements.txt              # 仅文档镜像爬虫需要; 核心库零依赖
 ├── LICENSE                       # MIT; docs/tdx-quant-docs/ 版权归通达信
