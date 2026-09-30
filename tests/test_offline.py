@@ -5,10 +5,12 @@ gpcw/lday 的真实数据用例依赖本机数据目录(见 conftest), 缺失时
 其余为纯逻辑用例, 任何环境可跑。运行: python -m pytest tests/test_offline.py -v
 """
 import os
+import json
 import shutil
 import struct
 import subprocess
 import sys
+import urllib.error
 from unittest.mock import patch
 
 import pytest
@@ -356,3 +358,55 @@ def test_divid_factors_parses_columnar_per10(monkeypatch):
     assert abs(div["20241220"] - 23.882) < 1e-9
     assert abs(div["20250626"] - 28.0242) < 1e-9
     assert "20260626" not in div
+
+
+# ---------------------------------------------------------------- 网络层重试(mock urlopen)
+class _FakeResp:
+    def __init__(self, data: bytes):
+        self._data = data
+
+    def read(self):
+        return self._data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_call_retries_once_on_network_error():
+    """首次连接失败自动重试一次并成功, 中间仅退避 0.5s(测试中打桩)。"""
+    tq = TqClient()
+    ok = json.dumps({"result": {"ErrorId": "0", "Value": 42}}).encode()
+    calls = []
+
+    def flaky(url, timeout=None):
+        calls.append(url)
+        if len(calls) == 1:
+            raise urllib.error.URLError("connection refused")
+        return _FakeResp(ok)
+
+    with patch("urllib.request.urlopen", flaky), patch("time.sleep"):
+        r = tq.call("get_match_stkinfo", key_word="x")
+    assert len(calls) == 2 and r["Value"] == 42
+
+
+def test_call_tqerror_after_retry_exhausted():
+    tq = TqClient()
+
+    def always_down(url, timeout=None):
+        raise urllib.error.URLError("refused")
+
+    with patch("urllib.request.urlopen", always_down), patch("time.sleep"):
+        with pytest.raises(TqError, match="TQ 服务不可达"):
+            tq.call("get_match_stkinfo", key_word="x")
+
+
+def test_call_non_json_response_becomes_tqerror():
+    """网关 200 但返回 HTML 错误页 -> 统一 TqError, 不裸抛 JSONDecodeError。"""
+    tq = TqClient()
+    bad = _FakeResp(b"<html>Service Unavailable</html>")
+    with patch("urllib.request.urlopen", lambda url, timeout=None: bad):
+        with pytest.raises(TqError, match="非 JSON"):
+            tq.call("get_match_stkinfo", key_word="x")

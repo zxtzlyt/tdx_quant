@@ -16,6 +16,7 @@
 调用方拿到的始终是完整数据。
 """
 import json
+import time
 import urllib.request
 
 DEFAULT_URL = "http://127.0.0.1:17709/"
@@ -37,6 +38,9 @@ class TqClient:
 
         注意: params 必须始终发送(空参也传 {}), 2026-09-29 实测网关对缺
         "params" 键的请求返回 -32602 "MCP参数params必须为对象"。
+
+        网络层错误(连接拒绝/超时/网关 5xx)自动重试一次 —— 批量取数长跑时
+        偶发一次抖动不应让整轮作废; 业务错误(ErrorId != 0 / 非法 JSON)不重试。
         """
         body = {"id": 1, "method": method, "params": params}
         req = urllib.request.Request(
@@ -45,14 +49,26 @@ class TqClient:
             headers={"Content-Type": "application/json; charset=utf-8"},
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                # errors="replace": 网关个别接口(create_sector 中文板块名等)会
-                # 在客户端存出非法字节, 返回的 JSON 不再是合法 UTF-8(2026-09-30
-                # 实测 get_user_sector 触发) —— 降级为替换符, 不让整条调用崩掉。
-                payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            raise TqError(f"TQ 服务不可达({self.base_url}): {e}") from e
+        last_err = None
+        for attempt in range(2):
+            if attempt:
+                time.sleep(0.5)
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    # errors="replace": 网关个别接口(create_sector 中文板块名等)会
+                    # 在客户端存出非法字节, 返回的 JSON 不再是合法 UTF-8(2026-09-30
+                    # 实测 get_user_sector 触发) —— 降级为替换符, 不让整条调用崩掉。
+                    raw = resp.read().decode("utf-8", errors="replace")
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                last_err = e
+                continue
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError as e:
+                raise TqError(f"{method} 返回非 JSON(网关异常?): {raw[:120]!r}") from e
+            break
+        else:
+            raise TqError(f"TQ 服务不可达({self.base_url}): {last_err}") from last_err
         if isinstance(payload.get("error"), dict):
             raise TqError(f"{method} JSON-RPC 错误: {payload['error']}")
         result = payload.get("result", {})
