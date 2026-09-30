@@ -72,6 +72,8 @@ python -c "from tdx_local import read_series; print(read_series('D:/券商tdx/vi
 python -m pytest tests/ -v
 ```
 
+依赖本机真实数据的用例默认指向作者的数据目录,其他机器可用环境变量 `TDX_CW_DIR` / `TDX_GTJA_CW` / `TDX_GTJA_LDAY` 覆盖,目录缺失时这些用例自动跳过(见 [conftest.py](tests/conftest.py))。CI(Windows, Python 3.9/3.12/3.14)在每次推送与 PR 时自动跑全部用例的离线部分。
+
 ## 安装
 
 核心库零依赖,克隆后在本仓库根目录直接 import 即可:
