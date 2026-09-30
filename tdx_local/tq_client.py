@@ -47,7 +47,10 @@ class TqClient:
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
+                # errors="replace": 网关个别接口(create_sector 中文板块名等)会
+                # 在客户端存出非法字节, 返回的 JSON 不再是合法 UTF-8(2026-09-30
+                # 实测 get_user_sector 触发) —— 降级为替换符, 不让整条调用崩掉。
+                payload = json.loads(resp.read().decode("utf-8", errors="replace"))
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise TqError(f"TQ 服务不可达({self.base_url}): {e}") from e
         if isinstance(payload.get("error"), dict):
