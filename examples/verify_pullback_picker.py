@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """DLL 选股器交叉验证 —— 用 Python 同口径复算"缩量回踩MA支撑"，对账插件选股结果。
 
+前置: 本机已部署"缩量回踩MA支撑"DLL 选股插件(自行按官方插件选股规范编译,
+本仓库不附带该 DLL)。没有该插件时本脚本无对账对象, 但 judge() 口径仍可参考。
+
 用法(三步):
   1. 通达信 公式菜单 → 插件选股 → 选"缩量回踩MA支撑"(参数保持默认) → 执行选股
   2. 点"选股入板块", 保存到自定义板块(简称用英文, 如 HJ)
@@ -8,7 +11,7 @@
        python examples/verify_pullback_picker.py HJ
      输出 DLL 与 Python 双方判定的一致性对账表。
 
-判定口径(与 dll/src/MyPicker/MyPicker.cpp 完全一致):
+判定口径(与插件源码 MyPicker.cpp 的 JudgeLast 完全一致):
   MA(20)较5天前上行; 今日量<=前5日均量*60%; 收盘价在MA20的±2%内。
 """
 import sys
@@ -16,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tdx_local import TqClient  # noqa: E402
+from tdx_local import TqClient, TqError  # noqa: E402
 
 # ============ 参数区(与插件界面填的参数保持一致) ============
 TOL_PCT = 2.0      # 回踩幅度%
@@ -93,4 +96,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except TqError as e:
+        print(f"\n[出错] {e}")
+        print("请确认通达信金融终端已启动并登录(TQ 服务 http://127.0.0.1:17709/),"
+              "环境要求见 README『快速开始』。")
+        sys.exit(1)

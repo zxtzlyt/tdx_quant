@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tdx_local import TqClient  # noqa: E402
+from tdx_local import TqClient, TqError  # noqa: E402
 
 
 def ma(values, n):
@@ -148,4 +148,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except TqError as e:
+        print(f"\n[出错] {e}")
+        print("请确认通达信金融终端已启动并登录(TQ 服务 http://127.0.0.1:17709/),"
+              "环境要求见 README『快速开始』。")
+        sys.exit(1)

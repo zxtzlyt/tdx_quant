@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tdx_local import TqClient  # noqa: E402
+from tdx_local import TqClient, TqError  # noqa: E402
 
 # ============================ 参数区(按需修改) ============================
 SECTOR = "银行"          # 候选板块名(通达信板块/行业名均可); 改成 "" 则用全部沪深A股(慢)
@@ -124,4 +124,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except TqError as e:
+        print(f"\n[出错] {e}")
+        print("请确认通达信金融终端已启动并登录(TQ 服务 http://127.0.0.1:17709/),"
+              "环境要求见 README『快速开始』。")
+        sys.exit(1)
