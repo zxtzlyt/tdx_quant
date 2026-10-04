@@ -10,6 +10,7 @@
 - 🔌 **TqClient**:通达信 TQ 本地接口(`127.0.0.1:17709`)的 Python 客户端 —— 日K/分钟线、实时五档、板块、交易日历、分红送配,大结果自动分页续取;服务端陷阱(空信封静默、无效参数)已在客户端层补救
 - 📊 **gpcw 财务文件解析**:直接解析专业财务文件(`gpcw*.dat`,FN1~FN584),1988 年至今全市场财务历史,免订阅;内置真值锚定的字段注册表与累计/单季差分
 - 🗂️ **lday 日线解析与合并**:把券商定制版的全市场历史日线并入官方客户端目录,补齐"只落地看过的标的"的历史缺口
+- 📈 **指标/缓存/回测三件套**:`indicators` 指标库(MACD/均线等 Python 自算 —— 公式引擎 HTTP 不可用的正解)、`kcache` 日线本地缓存(lday 二进制格式, 不复权, 支持截至某日回放)、`backtest` 选股策略回测(按调仓日切片重放防未来函数, 分红再投收益, 指数基准超额)
 - 📚 **131 页官方文档镜像 + 实测笔记**:官方没写透的隐藏参数、静默空返回、数据前置条件,全部记录在案
 - 🪶 **核心库零依赖**:纯标准库,克隆即用
 
@@ -64,7 +65,7 @@ python -c "from tdx_local import read_series; print(read_series('D:/券商tdx/vi
 
 完整示例见 [examples/](examples/):[macd_demo.py](examples/macd_demo.py)(取K线 + Python 自算 MACD)、[financial_demo.py](examples/financial_demo.py)(财务历史序列)、[mainbusi_demo.py](examples/mainbusi_demo.py)(经营分析批量下载 + xlsx 汇总)、[http_call.py](examples/http_call.py)(不依赖 tqcenter 的本地 HTTP 直连)。
 
-**选股/分析配方**(面向不想写代码的使用者,改文件头部参数区即可):[pick_technical.py](examples/pick_technical.py)(技术面选股+写回自定义板块)、[pick_fundamental.py](examples/pick_fundamental.py)(财报增速选股)、[market_overview.py](examples/market_overview.py)(板块强弱/全A估值/两融)、[stock_checkup.py](examples/stock_checkup.py)(单股一键体检,含分红再投总回报);DLL 插件选股的结果可用 [verify_pullback_picker.py](examples/verify_pullback_picker.py) 做 Python 同口径对账。
+**选股/分析配方**(面向不想写代码的使用者,改文件头部参数区即可):[pick_technical.py](examples/pick_technical.py)(技术面选股+写回自定义板块)、[pick_fundamental.py](examples/pick_fundamental.py)(财报增速选股)、[market_overview.py](examples/market_overview.py)(板块强弱/全A估值/两融)、[stock_checkup.py](examples/stock_checkup.py)(单股一键体检,含分红再投总回报);DLL 插件选股的结果可用 [verify_pullback_picker.py](examples/verify_pullback_picker.py) 做 Python 同口径对账。**策略验证与数据积累**:[backtest_picker.py](examples/backtest_picker.py)(把选股策略放到历史上逐日重放, 统计持有 5/20/60 日的分红再投回报与上证超额)、[archive_minutes.py](examples/archive_minutes.py)(每天收盘后跑一次把分钟K增量归档成 CSV, 坚持攒就能突破客户端约 100 天的分钟留存上限)。
 
 跑一遍实测用例确认环境(离线组不需要客户端;在线组在 TQ 服务不可达时自动整组跳过):
 
@@ -112,7 +113,10 @@ tdx_quant/
 │   ├── tq_client.py              # TQ HTTP JSON-RPC 客户端(自动分页续取)
 │   ├── cw_fields.py              # 财务字段注册表(锚定校准/单位/单季陷阱/缺失登记)
 │   ├── lday.py                   # 日线文件解析与合并同步
-│   └── gpcw.py                   # 专业财务文件解析器(历史序列/单季差分/目录同步)
+│   ├── gpcw.py                   # 专业财务文件解析器(历史序列/单季差分/目录同步)
+│   ├── indicators.py             # 技术指标库(MACD/均线/金叉/分红再投收益, 零依赖)
+│   ├── kcache.py                 # 日线本地缓存(lday 格式, 不复权, 截至..回放)
+│   └── backtest.py               # 选股策略回测(调仓日重放/防未来函数/基准超额)
 ├── examples/                     # 可运行示例
 │   ├── macd_demo.py              # 取K线 + Python 自算 MACD
 │   ├── financial_demo.py         # 财务历史序列示例
@@ -122,7 +126,9 @@ tdx_quant/
 │   ├── pick_fundamental.py       # 配方: 财报增速选股(HTTP FN 通道)
 │   ├── market_overview.py        # 配方: 板块强弱/全A估值/两融余额
 │   ├── stock_checkup.py          # 配方: 单股一键体检(含分红再投总回报)
-│   └── verify_pullback_picker.py # 配方: DLL 选股器×Python 同口径交叉对账
+│   ├── verify_pullback_picker.py # 配方: DLL 选股器×Python 同口径交叉对账
+│   ├── backtest_picker.py        # 配方: 策略历史回测(重放/超额统计)
+│   └── archive_minutes.py        # 配方: 分钟线归档(破 100 天留存上限)
 ├── tests/                        # 实测用例(pytest)
 │   ├── test_offline.py           # 解析/mock 逻辑, 不依赖客户端在线
 │   ├── test_live.py              # TQ 在线接口(服务离线时自动整组跳过)

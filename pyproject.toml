@@ -1,7 +1,7 @@
 # 核心库按"克隆即用"设计、不发布到 PyPI; 本文件只声明元数据与工具配置。
 [project]
 name = "tdx-quant"
-version = "1.0.0"
+version = "1.1.0"
 description = "通达信本地数据 Python 工具箱: TQ 客户端 / gpcw 财务解析 / lday 日线合并(纯标准库)"
 requires-python = ">=3.9"
 license = "MIT"

@@ -368,3 +368,37 @@ val = r['Value']['600000.SH']   # {'Date': [...], 'Open': [...], ...}
    `python examples/verify_pullback_picker.py HJ` 用 Python 同口径复算对账。
 5. 本会话 computer use 不可用(引导脚本路径变更报 unavailable) —— GUI 验证
    转用户三步手动流程, 见指南 §2.4。
+
+## 回测子系统与指标/缓存模块(2026-10-05 自主开发会话)
+
+> 用户授权 6 小时自主功能开发。产出: `tdx_local/{indicators,kcache,backtest}.py`
+> + `examples/{backtest_picker,archive_minutes}.py`。此处记录设计取舍与待验项。
+
+1. **指标抽取的口径统一**: macd_demo/stock_checkup/pick_technical 三处重复实现
+   收敛进 `indicators.py`。保留两处既定口径: ① MACD 柱 =(DIF−DEA)×2(A股看盘
+   软件口径); ② 交叉判定"昨天相等也算触发"(dif[-2]<=dea[-2])。修复原
+   total_return_with_dividends 原地 pop 入参 dict 的副作用, 并兼容 int/str
+   日期键(divid_factors 返回 str 键, market_data 的 Date 是 int)。
+2. **kcache 存不复权价是刻意设计**: 前复权序列随未来分红整体平移, 拿它做
+   point-in-time 回放本身失真; 当时看到的"前复权"无法从今天的复权序列复原。
+   回测的指标与收益都在原始价上算。与官方 vipdoc .day 文件混用时注意
+   Volume 单位口径需自查(本缓存只保证 TQ 返回原值)。
+3. **`end_time+count` 组合**: 官方文档明示"结束日期往前 n 根", 回测的
+   point-in-time 窗口依赖它。**探针用例已写入 tests/test_live.py
+   (test_market_data_end_time_count_window), 2026-10-05 会话中 TQ 服务未运行
+   未能真跑 —— 首次开启客户端跑 pytest 时留意该用例**。若语义不符,
+   backtest 数据源退到 kcache 全量+切片(默认路径本就如此, 不受影响)。
+4. **回测收益口径**: forward_return 与 stock_checkup 茅台口径一致(不复权价链
+   +分红事件逐日再投), 分红事件只取除息日位置在 (买入日, 卖出日] 的行 ——
+   买入当日除息归前手。 dividends_by_code 支持 callable(逐股惰性+记忆化),
+   可直接传 `tq.divid_factors`, 全市场回测不必预取全部分红。
+5. **防未来函数的构造性保证**: backtest.run 给策略的每个窗口都经
+   slice_asof(end_date=T) 截断, 有回归测试(test_bt_run_point_in_time_and_
+   benchmark)。但**策略函数闭包引用外部实时数据仍可绕过** —— docstring 与
+   配方模板都写明"只用 asof 入参"。
+6. **backtest_picker.py 未端到端实跑**(TQ 服务离线): 模块级逻辑已由 7 个
+   离线用例覆盖; 首次真跑预期是把候选池(约40只)全历史拉进 kcache, 一次
+   get_market_data 一批(150只/批)分页续取, 预计数秒。若报错优先查
+   `_missing` 与基准 999999.SH 是否有本地数据。
+7. **版本对齐**: `__init__.__version__` 0.2.0 与 pyproject 1.0.0 此前不同步,
+   本次统一为 1.1.0。

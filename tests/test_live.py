@@ -331,3 +331,16 @@ def test_service_latency_sanity():
     TQ.market_data(STOCKS_8, count=-1, start_time="19910101",
                    dividend_type="front")
     assert time.time() - t0 < 30
+
+
+def test_market_data_end_time_count_window():
+    """探针: count>0 + end_time = "结束日期往前 n 根"(回测 point-in-time 依赖)。"""
+    r = TQ.market_data(["600000.SH"], count=10, end_time="20240628",
+                       dividend_type="none", field_list=["Date", "Close"])
+    dates = ((r.get("Value") or {}).get("600000.SH") or {}).get("Date") or []
+    if not dates:
+        pytest.skip("本地无 600000.SH K线数据")
+    norm = [int(str(d).replace("-", "")) for d in dates]
+    assert len(norm) == 10
+    assert norm[-1] == 20240628          # 末根恰为 end_time(2024-06-28 为交易日)
+    assert all(d <= 20240628 for d in norm)
