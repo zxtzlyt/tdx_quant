@@ -18,7 +18,8 @@ import pytest
 from tdx_local import (TqClient, TqError, close_enough, approx_announce_date,
                        read_gpcw, read_series, scan_reports, single_quarters,
                        sync_cw, GpcwPlaceholder, GpcwCorrupt, GpcwReportGap)
-from tdx_local import cw_fields, gpcw, lday
+from tdx_local import cw_fields, gpcw, lday, kcache, indicators as ind
+from tdx_local import backtest as bt
 from conftest import ROOT, CW_DIR, GTJA_LDAY
 
 needs_cw = pytest.mark.skipif(not os.path.isdir(CW_DIR), reason=f"无数据目录 {CW_DIR}")
@@ -410,3 +411,209 @@ def test_call_non_json_response_becomes_tqerror():
     with patch("urllib.request.urlopen", lambda url, timeout=None: bad):
         with pytest.raises(TqError, match="非 JSON"):
             tq.call("get_match_stkinfo", key_word="x")
+
+
+# ---------------------------------------------------------------- 指标库(tdx_local.indicators)
+def test_ind_sma_series_and_last():
+    assert ind.sma([1, 2, 3, 4, 5], 3) == [None, None, 2.0, 3.0, 4.0]
+    assert ind.ma([1, 2, 3, 4, 5], 3) == 4.0
+    assert ind.ma([1, 2], 3) is None          # 数据不足 n 根
+
+
+def test_ind_ema_guards_and_constant():
+    assert ind.ema([], 12) == []              # 空列表不炸(原散落版会 IndexError)
+    assert ind.ema([7.0], 12) == [7.0]
+    assert ind.ema([5.0] * 10, 12) == [5.0] * 10   # 常数序列 EMA 恒等
+
+
+def test_ind_macd_flat_is_zero():
+    dif, dea, hist = ind.macd([10.0] * 40)
+    assert all(abs(x) < 1e-9 for x in dif + dea + hist)
+    assert len(hist) == 40
+
+
+def test_ind_macd_state_cross():
+    assert ind.macd_state([10.0] * 30 + [20.0]) == "金叉"   # 末端跳空
+    assert ind.macd_state([20.0] * 30 + [10.0]) == "死叉"   # 末端跳水
+    assert ind.macd_state([1.0]) == "数据不足"
+
+
+def test_ind_golden_cross_bull_align_volume_surge():
+    assert ind.is_golden_cross([1.0] * 11 + [100.0])          # 末端大阳线
+    assert not ind.is_golden_cross([100.0] * 11 + [1.0])      # 末端跳水
+    up = [5.0 + 0.5 * i for i in range(21)]
+    assert ind.is_bull_align(up)
+    assert not ind.is_bull_align(up[::-1])                    # 下跌排列必假
+    assert ind.is_volume_surge([10.0] * 5 + [100.0])
+    assert not ind.is_volume_surge([10.0] * 6)                # 无放量
+
+
+def test_ind_total_return_reinvest_and_nonmutating():
+    closes = [10.0] * 3
+    dates = [20240101, 20240102, 20240103]
+    divs = {20240102: 1.0}
+    p_ret, t_ret, n_div = ind.total_return_with_dividends(closes, dates, divs)
+    assert p_ret == 0.0 and n_div == 1
+    assert t_ret == pytest.approx(10.0)       # 每股派1元按10元再投 -> 10%份额增益
+    assert divs == {20240102: 1.0}            # 回归: 不修改入参(原实现原地 pop)
+
+
+def test_ind_max_drawdown():
+    assert ind.max_drawdown([10.0, 12.0, 6.0, 8.0]) == pytest.approx(-50.0)
+    assert ind.max_drawdown([1.0, 2.0, 3.0]) == 0.0    # 一路新高无回撤
+    assert ind.max_drawdown([5.0]) == 0.0
+
+
+# ---------------------------------------------------------------- 日线缓存(tdx_local.kcache)
+class _FakeKlineClient:
+    """market_data 打桩: 按 TQ 列式形态返回合成日K。"""
+
+    def __init__(self, bars_by_code):
+        self.bars = bars_by_code
+
+    def market_data(self, codes, **kw):
+        value, missing = {}, {}
+        for c in codes:
+            b = self.bars.get(c)
+            if b is None:
+                missing[c] = "本地无数据"
+            else:
+                value[c] = {k: list(v) for k, v in b.items()}
+        return {"ErrorId": "0", "Value": value, "_missing": missing}
+
+
+def _synth_bars(dates, base=10.0):
+    closes = [base + i for i in range(len(dates))]
+    return {"Date": list(dates),
+            "Open": [c - 0.5 for c in closes],
+            "High": [c + 0.5 for c in closes],
+            "Low": [c - 1.0 for c in closes],
+            "Close": closes,
+            "Volume": [1000 + i for i in range(len(dates))],
+            "Amount": [c * 1000.0 for c in closes]}
+
+
+def test_kcache_path_for(tmp_path):
+    assert kcache.path_for(tmp_path, "600000.SH").name == "sh600000.day"
+    assert kcache.path_for(tmp_path, "000001.SZ").name == "sz000001.day"
+    assert kcache.path_for(tmp_path, "430047.BJ").name == "bj430047.day"
+
+
+def test_kcache_update_read_roundtrip_and_merge(tmp_path):
+    fake = _FakeKlineClient({
+        "600000.SH": _synth_bars([20240101, 20240102, 20240103]),
+    })
+    stats = kcache.update(fake, ["600000.SH", "000858.SZ"], cache_dir=str(tmp_path))
+    assert stats["600000.SH"]["added"] == 3
+    assert "000858.SZ" in stats["_missing"]        # 无数据代码进 _missing 不炸
+    bars = kcache.read(str(tmp_path), "600000.SH")
+    assert bars["Date"] == [20240101, 20240102, 20240103]
+    assert bars["Close"] == [10.0, 11.0, 12.0]     # ×100 定点存储往返无损
+    assert bars["Volume"][0] == 1000
+
+    # 增量: 多两根 + 重叠日数据变化 -> 日期并集, 重叠日以 TQ 侧为准
+    fake.bars["600000.SH"] = _synth_bars([20240102, 20240103, 20240104, 20240105])
+    stats2 = kcache.update(fake, ["600000.SH"], cache_dir=str(tmp_path))
+    assert stats2["600000.SH"] == {"added": 2, "updated": 2, "total": 5}
+    assert kcache.read(str(tmp_path), "600000.SH")["Close"] == [10.0, 10.0, 11.0, 12.0, 13.0]
+
+
+def test_kcache_read_point_in_time(tmp_path):
+    fake = _FakeKlineClient({"600519.SH": _synth_bars(
+        [20240101, 20240102, 20240103, 20240104])})
+    kcache.update(fake, ["600519.SH"], cache_dir=str(tmp_path))
+    b = kcache.read(str(tmp_path), "600519.SH", end_date=20240102)
+    assert b["Date"] == [20240101, 20240102]       # 截至: 未来K线不可见
+    b = kcache.read(str(tmp_path), "600519.SH", count=2)
+    assert b["Date"] == [20240103, 20240104]       # 末端 n 根
+    assert kcache.read(str(tmp_path), "600000.SH") == {}   # 无缓存文件返回空
+
+
+def test_kcache_read_many_skips_missing(tmp_path):
+    fake = _FakeKlineClient({"600000.SH": _synth_bars([20240101])})
+    kcache.update(fake, ["600000.SH"], cache_dir=str(tmp_path))
+    got = kcache.read_many(str(tmp_path), ["600000.SH", "000001.SZ"])
+    assert set(got) == {"600000.SH"}
+
+
+# ---------------------------------------------------------------- 回测引擎(tdx_local.backtest)
+def _bt_bars(dates, closes):
+    closes = [float(c) for c in closes]
+    return {"Date": list(dates), "Open": closes, "High": closes,
+            "Low": closes, "Close": closes,
+            "Volume": [1] * len(dates), "Amount": [0.0] * len(dates)}
+
+
+def test_bt_slice_asof_no_lookahead():
+    bars = _bt_bars([1, 2, 3, 4, 5], [10, 11, 12, 13, 14])
+    s = bt.slice_asof(bars, 3)
+    assert s["Date"] == [1, 2, 3]              # 截断: >T 的K线不可见
+    s = bt.slice_asof(bars, 99, window=2)
+    assert s["Date"] == [4, 5]                 # 末端 window 根
+    assert bt.slice_asof(bars, 0)["Date"] == []
+
+
+def test_bt_make_rebalances():
+    cal = list(range(100, 130))                # 30 个交易日
+    r = bt.make_rebalances(cal, last_n=30, step=10)
+    assert r == [100, 110, 120, 129]           # 每10根一个 + 末端必收
+    assert bt.make_rebalances([], 10, 5) == []
+
+
+def test_bt_forward_return_plain_and_short():
+    dates = [20240101, 20240102, 20240103, 20240104]
+    closes = [10.0, 11.0, 12.0, 9.0]
+    assert bt.forward_return(dates, closes, 0, 2) == pytest.approx(20.0)  # 10->12
+    assert bt.forward_return(dates, closes, 2, 5) is None                 # 卖不出
+
+
+def test_bt_forward_return_dividends():
+    dates = [20240101, 20240102, 20240103]
+    closes = [10.0, 10.0, 10.0]
+    r = bt.forward_return(dates, closes, 0, 2, {"20240102": 1.0})
+    assert r == pytest.approx(10.0)            # 持有期除息再投 -> +10%
+    r2 = bt.forward_return(dates, closes, 1, 1, {"20240102": 1.0})
+    assert r2 == pytest.approx(0.0)            # 买入当日除息归前手, 不计
+
+
+def test_bt_run_point_in_time_and_benchmark():
+    dates = list(range(20240101, 20240131))    # 30 个交易日
+    up = _bt_bars(dates, [10 + 0.5 * i for i in range(30)])
+    flat = _bt_bars(dates, [10.0] * 30)
+    bars = {"AAA": up, "999999.SH": flat}
+    rebal = bt.make_rebalances(dates, last_n=30, step=10)
+
+    res = bt.run(bars, rebal, lambda asof: ["AAA"], horizons=(5,),
+                 dividends_by_code={}, benchmark="999999.SH")
+    assert all(p["code"] == "AAA" for p in res["picks"])
+    m = res["summary"][5]
+    # 末端调仓日买在最后一根K线无法结算(ret=None), 记入 picks 但不计入统计
+    assert len(res["picks"]) == 4 and m["n"] == 3 and m["win"] == 100.0
+    assert m["avg_excess"] == pytest.approx(m["avg"])   # 基准平盘 -> 超额=绝对收益
+
+    seen = []
+
+    def spy(asof):
+        seen.extend(asof["AAA"]["Date"])
+        return []
+
+    bt.run(bars, rebal, spy, horizons=(5,))
+    assert max(seen) <= max(rebal)             # 回归: 策略只见 <= 调仓日的K线
+
+
+def test_bt_run_dividend_callable_and_report():
+    dates = list(range(20240101, 20240131))
+    flat = _bt_bars(dates, [10.0] * 30)
+    bars = {"AAA": flat, "999999.SH": _bt_bars(dates, [10.0] * 30)}
+    calls = []
+
+    def div_getter(code):
+        calls.append(code)
+        return {"20240105": 0.5}
+
+    res = bt.run(bars, bt.make_rebalances(dates, 30, 10),
+                 lambda asof: ["AAA"], horizons=(5,),
+                 dividends_by_code=div_getter, benchmark="999999.SH")
+    assert calls.count("AAA") == 1             # callable 逐股只调一次(记忆化)
+    text = bt.report(res)
+    assert "持有期" in text and "胜率" in text and "5日" in text
