@@ -396,9 +396,11 @@ val = r['Value']['600000.SH']   # {'Date': [...], 'Open': [...], ...}
    slice_asof(end_date=T) 截断, 有回归测试(test_bt_run_point_in_time_and_
    benchmark)。但**策略函数闭包引用外部实时数据仍可绕过** —— docstring 与
    配方模板都写明"只用 asof 入参"。
-6. **backtest_picker.py 未端到端实跑**(TQ 服务离线): 模块级逻辑已由 7 个
-   离线用例覆盖; 首次真跑预期是把候选池(约40只)全历史拉进 kcache, 一次
-   get_market_data 一批(150只/批)分页续取, 预计数秒。若报错优先查
-   `_missing` 与基准 999999.SH 是否有本地数据。
+6. **backtest_picker.py 未连真实服务实跑**(TQ 服务离线): 模块级逻辑由 7 个
+   离线用例覆盖, 整条链路(取数->建缓存->重放->报告)由假客户端接线测试验证
+   (test_guide_examples::test_backtest_picker_offline_wire)。首次真跑预期是把
+   候选池(约40只)全历史拉进 kcache, 150只/批分页续取, 预计数秒; 若报错优先查
+   `_missing` 与基准 999999.SH 是否有本地数据。同会话伸缩项: pick_technical/
+   pick_fundamental 增加 WRITE_CSV 参数(结果带日期追加进 picks_csv/, 默认关)。
 7. **版本对齐**: `__init__.__version__` 0.2.0 与 pyproject 1.0.0 此前不同步,
    本次统一为 1.1.0。

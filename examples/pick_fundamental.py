@@ -9,6 +9,8 @@
 
 用法: python examples/pick_fundamental.py
 """
+import csv
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -27,6 +29,9 @@ PROFIT_YOY_MIN = 10.0       # 归母净利润同比% 下限
 REVENUE_YOY_MIN = 0.0       # 营业收入同比% 下限
 PROFIT_MIN = 0.0            # 最新归母净利润(元) 下限(>0 排除亏损股)
 COUNT = 50                  # 最多列出前 N 只(按净利润同比从高到低)
+WRITE_CSV = False           # True = 结果追加进 CSV(带日期戳), 便于长期跟踪每次选股
+CSV_DIR = os.environ.get("TDX_PICKS_CSV_DIR",
+                         str(Path(__file__).resolve().parent.parent / "picks_csv"))
 # ========================================================================
 
 
@@ -105,6 +110,21 @@ def main() -> None:
         print(f"{code:<10}{name:<8}{profit / 1e8:>14.2f}{p_yoy:>10.1f}{r_yoy:>10.1f}")
     if missing:
         print(f"\n[提示] {len(missing)} 只本地无财报数据被跳过")
+
+    # ---- 结果落盘(可选): 每次运行追加一段带日期的行, 长期跟踪选股历史 ----
+    if WRITE_CSV and hits:
+        path = Path(CSV_DIR) / "pick_fundamental.csv"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        is_new = not path.exists()
+        with open(path, "a", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            if is_new:
+                w.writerow(["run_date", "code", "name", "profit_yi",
+                            "profit_yoy_pct", "rev_yoy_pct"])
+            today = date.today().strftime("%Y%m%d")
+            w.writerows([today, c, n, f"{p / 1e8:.2f}", f"{py:.1f}", f"{ry:.1f}"]
+                        for c, n, p, py, ry in hits[:COUNT])
+        print(f"结果已追加 -> {path}")
 
 
 if __name__ == "__main__":

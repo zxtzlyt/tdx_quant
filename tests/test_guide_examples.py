@@ -190,3 +190,72 @@ def test_stock_checkup_600000(capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "浦发银行" in out and "体检报告" in out
     assert "财报" in out and "股息率" in out
+
+
+# --------------------------------------------------------------- 离线: 新配方接线(假客户端)
+class _FakeBtTq:
+    """backtest_picker/archive_minutes 的最小假客户端。"""
+
+    def __init__(self, bars):
+        self.bars = bars
+
+    def call(self, method, **kw):
+        assert method == "get_stock_list_in_sector"
+        return {"ErrorId": "0", "Value": [{"Code": c, "Name": n} for c, n in
+                                          [("AAA", "甲"), ("BBB", "乙")]]}
+
+    def market_data(self, codes, **kw):
+        return {"ErrorId": "0",
+                "Value": {c: {k: list(v) for k, v in self.bars[c].items()}
+                          for c in codes if c in self.bars},
+                "_missing": {}}
+
+    def divid_factors(self, code):
+        return {}
+
+
+def _bt_bars(dates, closes):
+    closes = [float(c) for c in closes]
+    return {"Date": list(dates), "Open": closes, "High": closes, "Low": closes,
+            "Close": closes, "Volume": [1] * len(dates), "Amount": [0.0] * len(dates)}
+
+
+def test_backtest_picker_offline_wire(tmp_path, monkeypatch, capsys):
+    """回测配方端到端(假客户端+临时缓存): 校验取数->建缓存->重放->报告全链路。"""
+    dates = list(range(20240101, 20240131))          # 30 个交易日
+    mod = _load("backtest_picker")
+    fake = _FakeBtTq({"AAA": _bt_bars(dates, [10 + 0.5 * i for i in range(30)]),
+                      "BBB": _bt_bars(dates, [10.0] * 30),
+                      "999999.SH": _bt_bars(dates, [10.0] * 30)})
+    monkeypatch.setattr(mod, "TqClient", lambda: fake)
+    monkeypatch.setattr(mod, "WANT_GOLDEN_CROSS", False)   # 全选, 保证有成交笔
+    monkeypatch.setattr(mod, "WANT_BULL_ALIGN", False)
+    monkeypatch.setattr(mod, "LOOKBACK", 30)
+    monkeypatch.setattr(mod.kcache, "default_dir", lambda: str(tmp_path))
+    mod.main()
+    out = capsys.readouterr().out
+    assert "候选池 2 只" in out and "调仓日" in out
+    assert "笔选股" in out and "5日" in out and "持有期" in out   # 报告表已打印
+    assert "[口径]" in out
+    assert (tmp_path / "sh999999.day").exists()      # 基准指数也进了缓存
+
+
+def test_archive_minutes_offline_wire(tmp_path, monkeypatch, capsys):
+    """分钟归档配方端到端: 首次写 CSV, 二次同数据去重为 0 新增。"""
+    mod = _load("archive_minutes")
+    n = 8
+    fake = _FakeBtTq({"600000.SH": {
+        "Date": ["20260930"] * n, "Time": [f"0930+i" for i in range(n)],
+        "Open": [10.0] * n, "High": [10.1] * n, "Low": [9.9] * n,
+        "Close": [10.05] * n, "Volume": [100] * n, "Amount": [1000.0] * n}})
+    monkeypatch.setattr(mod, "TqClient", lambda: fake)
+    monkeypatch.setattr(mod, "CODES", ["600000.SH"])
+    monkeypatch.setattr(mod, "out_dir", lambda period: tmp_path / period)
+    mod.main()
+    out1 = capsys.readouterr().out
+    assert "新增 8 行" in out1
+    csv_path = tmp_path / "5m" / "sh600000.csv"
+    assert csv_path.exists()
+    mod.main()                                        # 同数据再跑: 全部去重
+    out2 = capsys.readouterr().out
+    assert "新增 0 行" in out2

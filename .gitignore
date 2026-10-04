@@ -33,6 +33,7 @@ docs/.obsidian/
 # 本地运行数据(K线/分钟缓存, 由 kcache 与 archive_minutes 重新生成)
 kcache/
 kcache_min/
+picks_csv/
 
 # 本机工具与未公开资料
 tdx_docs/

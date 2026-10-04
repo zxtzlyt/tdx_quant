@@ -7,7 +7,10 @@
 用法: python examples/pick_technical.py
 把下面"参数区"里的板块名 / 开关改一改, 再跑一次就是新策略。
 """
+import csv
+import os
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -27,6 +30,9 @@ COUNT = 120              # 最多列出前 N 只(按代码序)
 SEND_TO_TDX = True       # True = 把结果写进通达信自定义板块 BLOCK_CODE
 BLOCK_CODE = "JXG"       # 板块简称(必须英文: HTTP 通道写中文板块名会损坏客户端板块表)
 BLOCK_NAME = "JXG"       # 板块名称(同样用英文; 可在客户端"自定义板块设置"里手动改名)
+WRITE_CSV = False        # True = 结果追加进 CSV(带日期戳), 便于长期跟踪每次选股
+CSV_DIR = os.environ.get("TDX_PICKS_CSV_DIR",
+                         str(Path(__file__).resolve().parent.parent / "picks_csv"))
 # ========================================================================
 
 # 指标判定函数(sma/is_golden_cross/is_bull_align/is_volume_surge)已统一
@@ -80,6 +86,20 @@ def main() -> None:
         print(f"{code:<10}{name:<8}{close:>8.2f}{chg:>+8.2f}")
     if missing:
         print(f"\n[提示] {len(missing)} 只无本地K线已跳过(可在客户端打开该股页面补数据)")
+
+    # ---- 3.5 结果落盘(可选): 每次运行追加一段带日期的行, 长期跟踪选股历史 ----
+    if WRITE_CSV and hits:
+        path = Path(CSV_DIR) / "pick_technical.csv"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        is_new = not path.exists()
+        with open(path, "a", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            if is_new:
+                w.writerow(["run_date", "code", "name", "close", "chg_pct"])
+            today = date.today().strftime("%Y%m%d")
+            w.writerows([today, c, n, f"{p:.2f}", f"{g:.2f}"]
+                        for c, n, p, g in hits[:COUNT])
+        print(f"结果已追加 -> {path}")
 
     # ---- 4. 写回通达信自定义板块(可选) ----
     if SEND_TO_TDX and hits:
