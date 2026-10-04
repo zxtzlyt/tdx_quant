@@ -13,57 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tdx_local import TqClient, TqError  # noqa: E402
-
-
-def ma(values, n):
-    if len(values) < n:
-        return None
-    return sum(values[-n:]) / n
-
-
-def macd_state(closes):
-    """自算 MACD(12,26,9), 返回 '金叉/死叉/多头/空头'。"""
-    def ema(vals, n):
-        k, out = 2 / (n + 1), [vals[0]]
-        for v in vals[1:]:
-            out.append(v * k + out[-1] * (1 - k))
-        return out
-    dif = [a - b for a, b in zip(ema(closes, 12), ema(closes, 26))]
-    dea = ema(dif, 9)
-    if dif[-1] > dea[-1] and dif[-2] <= dea[-2]:
-        return "金叉"
-    if dif[-1] < dea[-1] and dif[-2] >= dea[-2]:
-        return "死叉"
-    return "多头" if dif[-1] > dea[-1] else "空头"
-
-
-def total_return_with_dividends(closes, dates, dividends, years=5):
-    """近 years 年: 纯价格回报 vs 分红再投总回报(%)。
-
-    dividends: {除息日YYYYMMDD: 每股税前派息元}。买入日起每个除息日把
-    现金分红按当日收盘价再投入。与 LOCAL_NOTES 茅台口径一致。
-    窗口锚定在数据末端(末端年份-years), 本地数据起点不足5年也能对齐。
-    """
-    if not closes:
-        return None, None, 0
-    cut = int(str(dates[-1])[:4]) - years
-    idx0 = next((i for i, d in enumerate(dates) if int(str(d)[:4]) >= cut), 0)
-    seg_d, seg_c = dates[idx0:], closes[idx0:]
-    if len(seg_c) < 2:
-        return None, None, 0
-    price_ret = (seg_c[-1] / seg_c[0] - 1) * 100
-
-    shares, cash, n_div = 1.0, 0.0, 0
-    for d, c in zip(seg_d, seg_c):
-        div = dividends.pop(str(d), 0.0)
-        if div:
-            n_div += 1
-            cash += shares * div
-            if c > 0:
-                shares += cash / c
-                cash = 0.0
-    total_ret = (shares * seg_c[-1] + cash) / seg_c[0] - 1
-    return price_ret, total_ret * 100, n_div
+from tdx_local.indicators import ma, macd_state, total_return_with_dividends  # noqa: E402,F401
 
 
 def main() -> None:
@@ -126,7 +76,7 @@ def main() -> None:
         val2 = (r2.get("Value") or {}).get(code) or {}
         raw_c = [float(x) for x in val2.get("Close") or []]
         raw_d = [int(d) for d in val2.get("Date") or []]
-        p_ret, t_ret, n_div = total_return_with_dividends(raw_c, raw_d, dict(divs))
+        p_ret, t_ret, n_div = total_return_with_dividends(raw_c, raw_d, divs)
         if p_ret is not None:
             print(f"近5年: 纯价格回报 {p_ret:+.1f}% | "
                   f"分红再投总回报 {t_ret:+.1f}% (期间分红 {n_div} 次)")

@@ -11,15 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tdx_local import TqClient  # noqa: E402
-
-
-def ema(values, n):
-    k = 2 / (n + 1)
-    out = [values[0]]
-    for v in values[1:]:
-        out.append(v * k + out[-1] * (1 - k))
-    return out
+from tdx_local import TqClient, TqError  # noqa: E402
+from tdx_local.indicators import macd, macd_state  # noqa: E402
 
 
 def main() -> None:
@@ -37,21 +30,19 @@ def main() -> None:
     dates = val["Date"]
     print(f"{code} 本地取到 {len(closes)} 根日K, MACD(12,26,9):")
 
-    dif = [a - b for a, b in zip(ema(closes, 12), ema(closes, 26))]
-    dea = ema(dif, 9)
-    hist = [(d - f) * 2 for d, f in zip(dif, dea)]
+    dif, dea, hist = macd(closes)
     print(f"{'日期':<10}{'收盘':>8}{'DIF':>9}{'DEA':>9}{'MACD柱':>9}")
     for i in range(len(closes) - 5, len(closes)):
         print(f"{dates[i]:<10}{closes[i]:>8.2f}{dif[i]:>9.3f}{dea[i]:>9.3f}{hist[i]:>9.3f}")
 
-    if dif[-1] > dea[-1] and dif[-2] <= dea[-2]:
-        state = "金叉"
-    elif dif[-1] < dea[-1] and dif[-2] >= dea[-2]:
-        state = "死叉"
-    else:
-        state = "多头" if dif[-1] > dea[-1] else "空头"
-    print("当前状态:", state)
+    print("当前状态:", macd_state(closes))
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except TqError as e:
+        print(f"\n[出错] {e}")
+        print("请确认通达信金融终端已启动并登录(TQ 服务 http://127.0.0.1:17709/),"
+              "环境要求见 README『快速开始』。")
+        sys.exit(1)

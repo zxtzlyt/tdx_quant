@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tdx_local import TqClient, TqError  # noqa: E402
+from tdx_local.indicators import sma, is_golden_cross, is_bull_align, is_volume_surge  # noqa: E402,F401
 
 # ============================ 参数区(按需修改) ============================
 SECTOR = "银行"          # 候选板块名(通达信板块/行业名均可); 改成 "" 则用全部沪深A股(慢)
@@ -28,42 +29,9 @@ BLOCK_CODE = "JXG"       # 板块简称(必须英文: HTTP 通道写中文板块
 BLOCK_NAME = "JXG"       # 板块名称(同样用英文; 可在客户端"自定义板块设置"里手动改名)
 # ========================================================================
 
-
-def sma(values, n):
-    """简单均线序列: 前n-1个位置为 None。"""
-    out, s = [], 0.0
-    for i, v in enumerate(values):
-        s += v
-        if i >= n:
-            s -= values[i - n]
-        out.append(s / n if i >= n - 1 else None)
-    return out
-
-
-def is_golden_cross(closes, fast=MA_FAST, slow=MA_SLOW):
-    """最后一根K线上, fast 均线上穿 slow 均线(今天>昨, 且昨天<=前)。"""
-    ma_f, ma_s = sma(closes, fast), sma(closes, slow)
-    a, b = len(closes) - 1, len(closes) - 2
-    if min(ma_f[a], ma_s[a], ma_f[b], ma_s[b]) is None:
-        return False
-    return ma_f[a] > ma_s[a] and ma_f[b] <= ma_s[b]
-
-
-def is_bull_align(closes, n1=5, n2=10, n3=20):
-    """均线多头排列: MA5 > MA10 > MA20。"""
-    if len(closes) < n3:
-        return False
-    m5, m10, m20 = sma(closes, n1)[-1], sma(closes, n2)[-1], sma(closes, n3)[-1]
-    return None not in (m5, m10, m20) and m5 > m10 > m20
-
-
-def is_volume_surge(volumes, ratio=VOLUME_RATIO, base=5):
-    """今日成交量 > 前 base 日均量的 ratio 倍。"""
-    if len(volumes) < base + 1:
-        return False
-    avg = sum(float(v) for v in volumes[-base - 1:-1]) / base
-    return avg > 0 and float(volumes[-1]) > avg * ratio
-
+# 指标判定函数(sma/is_golden_cross/is_bull_align/is_volume_surge)已统一
+# 抽到 tdx_local/indicators.py, 上面一行 import 进本模块命名空间 ——
+# 口径与回测、体检脚本完全一致。
 
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
