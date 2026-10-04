@@ -383,11 +383,9 @@ val = r['Value']['600000.SH']   # {'Date': [...], 'Open': [...], ...}
    point-in-time 回放本身失真; 当时看到的"前复权"无法从今天的复权序列复原。
    回测的指标与收益都在原始价上算。与官方 vipdoc .day 文件混用时注意
    Volume 单位口径需自查(本缓存只保证 TQ 返回原值)。
-3. **`end_time+count` 组合**: 官方文档明示"结束日期往前 n 根", 回测的
-   point-in-time 窗口依赖它。**探针用例已写入 tests/test_live.py
-   (test_market_data_end_time_count_window), 2026-10-05 会话中 TQ 服务未运行
-   未能真跑 —— 首次开启客户端跑 pytest 时留意该用例**。若语义不符,
-   backtest 数据源退到 kcache 全量+切片(默认路径本就如此, 不受影响)。
+3. **`end_time+count` 组合: 实测通过**(2026-10-05 客户端在线,
+   test_market_data_end_time_count_window): count=10+end_time=20240628 恰好
+   返回截至该日的 10 根, 末根==end_time。回测 point-in-time 窗口语义坐实。
 4. **回测收益口径**: forward_return 与 stock_checkup 茅台口径一致(不复权价链
    +分红事件逐日再投), 分红事件只取除息日位置在 (买入日, 卖出日] 的行 ——
    买入当日除息归前手。 dividends_by_code 支持 callable(逐股惰性+记忆化),
@@ -404,3 +402,21 @@ val = r['Value']['600000.SH']   # {'Date': [...], 'Open': [...], ...}
    pick_fundamental 增加 WRITE_CSV 参数(结果带日期追加进 picks_csv/, 默认关)。
 7. **版本对齐**: `__init__.__version__` 0.2.0 与 pyproject 1.0.0 此前不同步,
    本次统一为 1.1.0。
+
+### 客户端在线真跑补记(2026-10-05 下午, 标准版 V7.73)
+
+8. **批量快照标准版可用了**: `get_market_snapshot_batch` 在量化模拟版网关
+   曾 -32601 不支持(2026-09-30), 标准版实测一次返回多只五档全字段
+   (field_list 照例被忽略, 数值为字符串)。已封装 `TqClient.snapshot_batch()`
+   —— 盘中批量盯盘不用再循环单只。同型坑: `get_financial_data` 的
+   **ProDataPaged 分页标记标准版不再回**(量化模拟版曾回 True), 依赖该
+   标记的逻辑要按"可能缺席"处理(tests 已改为两版本都通过)。
+9. **分钟周期实测**: period 合法形如 '1m'/'5m'/'15m'(写 '5'/'5min' 报
+   period error); 客户端本地是否有数据取决于是否下载过该周期 —— 本机
+   1m 全市场有货且留存约两个月(600000.SH 最早 20260807, Time 格式
+   HHMMSS), 5m/15m 为空信封(没下载过)。archive_minutes 默认周期据此
+   定为 1m; 首跑 7 只归档 60,720 行, 二次运行 0 行(去重验证通过)。
+10. **backtest 首次真跑**(银行板块 42 只): kcache 首建 140,989 根日K
+    (数秒级), 500 交易日 51 个调仓日重放出 35 笔金叉+多头选股; 60 日
+    持有胜率 65.6%/平均超额 +1.89%, 20 日 61.8%/+0.60%, 5 日 48.6%/-0.61%
+    (上证基准)。全链路(取数->缓存->重放->分红再投->报告)一次跑通。

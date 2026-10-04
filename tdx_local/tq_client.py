@@ -239,6 +239,17 @@ class TqClient:
         flat = {k: x for k, x in r.items() if k not in meta_keys}
         return flat
 
+    def snapshot_batch(self, stock_list, field_list=None) -> dict:
+        """批量五档快照 -> {code: 平铺字段dict}。
+
+        标准版 7.73 实测可用(2026-10-05); 旧量化模拟版网关曾对同方法
+        返回 -32601 不支持(2026-09-30)。field_list 服务端忽略, 恒返回
+        全部字段, 数值为字符串(与单只 snapshot 一致)。
+        """
+        r = self.call("get_market_snapshot_batch", stock_list=list(stock_list),
+                      field_list=field_list or [])
+        return r.get("Value") or {}
+
     def stock_info(self, stock_code: str, field_list=None) -> dict:
         """基础信息。注意: 本接口字段平铺在 result 顶层而非 Value(见 LOCAL_NOTES)。"""
         r = self.call("get_stock_info", stock_code=stock_code, field_list=field_list or [])

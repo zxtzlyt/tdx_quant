@@ -250,6 +250,7 @@ def test_archive_minutes_offline_wire(tmp_path, monkeypatch, capsys):
         "Close": [10.05] * n, "Volume": [100] * n, "Amount": [1000.0] * n}})
     monkeypatch.setattr(mod, "TqClient", lambda: fake)
     monkeypatch.setattr(mod, "CODES", ["600000.SH"])
+    monkeypatch.setattr(mod, "PERIOD", "5m")          # 钉死周期, 不随示例默认值漂移
     monkeypatch.setattr(mod, "out_dir", lambda period: tmp_path / period)
     mod.main()
     out1 = capsys.readouterr().out

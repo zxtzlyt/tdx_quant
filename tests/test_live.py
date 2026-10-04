@@ -128,10 +128,14 @@ def test_snapshot_five_levels():
     assert len(s["Buyp"]) == 5 and len(s["Sellp"]) == 5
 
 
-def test_snapshot_batch_unsupported_raises():
-    with pytest.raises(TqError, match="32601"):
-        TQ.call("get_market_snapshot_batch",
-                stock_list=["600000.SH", "600519.SH"], field_list=[])
+def test_snapshot_batch_supported_on_standard():
+    """批量快照: 量化模拟版网关曾 -32601 不支持(2026-09-30 实测);
+    标准版 7.73 实测可用(2026-10-05), 一次返回多只五档全字段。"""
+    r = TQ.snapshot_batch(["600000.SH", "600519.SH"])
+    assert set(r) == {"600000.SH", "600519.SH"}
+    for code, s in r.items():
+        assert float(s["LastClose"]) > 0
+        assert len(s["Buyp"]) == 5 and len(s["Sellp"]) == 5
 
 
 def test_stock_info_flat_with_j_fields():
@@ -244,7 +248,9 @@ def test_financial_data_calendar_only():
     per = (r.get("Value") or {}).get("600519.SH") or {}
     assert "announce_time" in per and "tag_time" in per
     assert not [k for k in per if k.upper().startswith("FN")]
-    assert r.get("ProDataPaged") is True
+    # 分页标记与版本相关: 量化模拟版曾回 ProDataPaged=True(2026-09-30),
+    # 标准版同一请求不带回分页标记(2026-10-05) —— 两者都算通过。
+    assert r.get("ProDataPaged") in (True, None)
 
 
 def test_financial_data_fn_numeric_channel():
