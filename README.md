@@ -115,7 +115,7 @@ tdx_quant/
 │   ├── lday.py                   # 日线文件解析与合并同步
 │   ├── gpcw.py                   # 专业财务文件解析器(历史序列/单季差分/目录同步)
 │   ├── indicators.py             # 技术指标库(MACD/均线/金叉/分红再投收益, 零依赖)
-│   ├── kcache.py                 # 日线本地缓存(lday 格式, 不复权, 截至..回放)
+│   ├── kcache.py                 # 日线本地缓存(lday 格式, 不复权, 截至某日回放)
 │   └── backtest.py               # 选股策略回测(调仓日重放/防未来函数/基准超额)
 ├── examples/                     # 可运行示例
 │   ├── macd_demo.py              # 取K线 + Python 自算 MACD

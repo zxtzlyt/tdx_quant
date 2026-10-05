@@ -245,7 +245,7 @@ def test_archive_minutes_offline_wire(tmp_path, monkeypatch, capsys):
     mod = _load("archive_minutes")
     n = 8
     fake = _FakeBtTq({"600000.SH": {
-        "Date": ["20260930"] * n, "Time": [f"0930+i" for i in range(n)],
+        "Date": ["20260930"] * n, "Time": [f"0930{i:02d}" for i in range(n)],
         "Open": [10.0] * n, "High": [10.1] * n, "Low": [9.9] * n,
         "Close": [10.05] * n, "Volume": [100] * n, "Amount": [1000.0] * n}})
     monkeypatch.setattr(mod, "TqClient", lambda: fake)
