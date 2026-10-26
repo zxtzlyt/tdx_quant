@@ -7,7 +7,8 @@
   3. get_stock_info 的 J_ 系列字段 —— 免费的最新一期财务摘要
 实测注意事项见仓库 docs/LOCAL_NOTES.md。
 """
-from . import backtest, cw_fields, indicators, kcache, lday, ratios
+from . import (backtest, cw_fields, factor, indicators, kcache, lday,
+               limits, ratios)
 from .tq_client import TqClient, TqError
 
 # gpcw 相关导出走惰性加载(PEP 562): `python -m tdx_local.gpcw` 时避免 runpy
@@ -25,7 +26,7 @@ def __getattr__(name):
 
 
 __all__ = ["TqClient", "TqError", "backtest", "cw_fields", "indicators", "kcache",
-           "lday", "ratios",
+           "lday", "ratios", "factor", "limits",
            "read_gpcw", "read_series", "scan_reports",
            "single_quarters", "sync_cw", "close_enough", "approx_announce_date",
            "GpcwPlaceholder", "GpcwCorrupt", "GpcwReportGap"]

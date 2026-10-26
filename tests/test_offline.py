@@ -20,6 +20,8 @@ from tdx_local import (TqClient, TqError, close_enough, approx_announce_date,
                        sync_cw, GpcwPlaceholder, GpcwCorrupt, GpcwReportGap)
 from tdx_local import cw_fields, gpcw, lday, kcache, indicators as ind
 from tdx_local import backtest as bt
+from tdx_local import factor as fc
+from tdx_local import limits as lm
 from conftest import ROOT, CW_DIR, GTJA_LDAY
 
 needs_cw = pytest.mark.skipif(not os.path.isdir(CW_DIR), reason=f"无数据目录 {CW_DIR}")
@@ -845,3 +847,108 @@ def test_ratios_zero_denominator_and_unknown_name():
     assert t[20241231]["净现比"] == pytest.approx(0.5)
     with pytest.raises(LookupError):
         ratios.compute(recs, ["不存在的比率"])
+
+
+# ---------------------------------------------------------------- 因子评测框架(tdx_local.factor)
+def test_factor_spearman_known_values():
+    assert fc.spearman([1, 2, 3, 4, 5], [1, 2, 3, 4, 5]) == pytest.approx(1.0)
+    assert fc.spearman([1, 2, 3, 4, 5], [5, 4, 3, 2, 1]) == pytest.approx(-1.0)
+    assert fc.spearman([1, 2, 3], [1, 2, 3]) == pytest.approx(1.0)
+    assert fc.spearman([1, 1, 2], [3, 4, 5]) is not None       # 并列秩不炸
+    assert fc.spearman([1, 1, 1], [1, 2, 3]) is None           # 零方差 -> None
+    assert fc.spearman([1, 2], [1, 2]) is None                 # 太短
+
+
+def test_factor_run_perfect_factor_groups_and_ic():
+    """完美因子(因子值=未来收益排序) -> IC=1, 最高层收益>最低层, spread>0。"""
+    dates = list(range(20240101, 20240141))                    # 40 个交易日
+    base = [10.0 + i * 0.01 for i in range(40)]
+    bars = {"999999.SH": _bt_bars(dates, [10.0] * 40)}
+    fwd_map = {}                                               # code -> 未来涨幅
+    for g in range(5):                                         # 5 只, 增速随 g 递增
+        code = f"S{g}"
+        slope = 0.02 + g * 0.05
+        bars[code] = _bt_bars(dates, [10 + slope * i for i in range(40)])
+        fwd_map[code] = slope
+
+    def perfect(asof, code):
+        return fwd_map.get(code)
+
+    rebal = [20240110, 20240130]
+    res = fc.run(bars, rebal, perfect, horizons=(5,), n_groups=5)
+    s = res["summary"][5]
+    assert s["n_periods"] == 2
+    assert s["ic_mean"] == pytest.approx(1.0, abs=1e-6)
+    gm = s["groups_mean"]
+    assert gm[5] > gm[1] and s["spread_mean"] > 0
+    assert fc.report(res).startswith("共")
+
+
+def test_factor_run_point_in_time():
+    """回归: 因子函数只见 <= 调仓日的K线(与 backtest 同构造)。"""
+    dates = list(range(20240101, 20240131))
+    bars = {"AAA": _bt_bars(dates, [10 + 0.5 * i for i in range(30)])}
+    seen = []
+
+    def spy(asof, code):
+        seen.extend(asof["Date"])
+        return 1.0
+
+    fc.run(bars, [20240115], spy, horizons=(5,))
+    assert seen and max(seen) <= 20240115
+
+
+# ---------------------------------------------------------------- 涨停/连板复盘(tdx_local.limits)
+def _limit_bars(code, rows):
+    """rows: [(prev关系由顺序决定), 每行 (date, open, high, low, close)] -> 列式bars。"""
+    return {"Code": code,
+            "Date": [r[0] for r in rows], "Open": [r[1] for r in rows],
+            "High": [r[2] for r in rows], "Low": [r[3] for r in rows],
+            "Close": [r[4] for r in rows]}
+
+
+def test_limits_ratio_and_price():
+    assert lm.limit_ratio("600000.SH") == 0.10
+    assert lm.limit_ratio("300750.SZ") == 0.20
+    assert lm.limit_ratio("688111.SH") == 0.20
+    assert lm.limit_ratio("430047.BJ") == 0.30
+    assert lm.limit_ratio("600000.SH", st=True) == 0.05
+    assert lm.limit_ratio("300750.SZ", st=True) == 0.20      # 创业板 ST 仍 20%
+    assert lm.limit_up_price(9.87, "600000.SH") == 10.86     # 10.857 四舍五入到分
+    assert lm.limit_down_price(9.87, "600000.SH") == 8.88    # 8.883 -> 8.88
+    assert lm.limit_up_price(10.00, "300750.SZ") == 12.00
+
+
+def test_limits_classify():
+    # 主板前收 10.00: 涨停 11.00 跌停 9.00
+    assert lm.classify("600000.SH", 10.0, 11.0, 10.5, 11.0) == "涨停"
+    assert lm.classify("600000.SH", 10.0, 11.0, 10.5, 10.8) == "炸板"
+    assert lm.classify("600000.SH", 10.0, 10.5, 9.0, 9.0) == "跌停"
+    assert lm.classify("600000.SH", 10.0, 10.5, 9.0, 9.5) == "跌停炸板"
+    assert lm.classify("600000.SH", 10.0, 10.5, 9.5, 10.2) == "普通"
+    assert lm.classify("600000.SH", 0, 10.5, 9.5, 10.2) is None   # 前收无效
+
+
+def test_limits_streaks_and_review():
+    # 10.00 -> 11.00 -> 12.10 -> 13.31 三连板(主板 10%)
+    rows = [(20240101, 10.0, 10.5, 9.5, 10.0),
+            (20240102, 10.9, 11.0, 10.8, 11.0),
+            (20240103, 12.0, 12.1, 11.9, 12.1),
+            (20240104, 13.2, 13.31, 13.0, 13.31)]
+    bars = {"600000.SH": _limit_bars("600000.SH", rows),
+            "000001.SZ": _limit_bars("000001.SZ", rows[:3] + [
+                (20240104, 13.0, 13.31, 12.9, 13.0)]),        # 第4日触板未封=炸板
+            "600519.SH": _limit_bars("600519.SH", rows[:2] + [
+                (20240103, 11.5, 12.0, 11.2, 11.5),
+                (20240104, 11.5, 12.0, 11.2, 11.6)])}         # 普通日
+    s = lm.streaks(bars)
+    assert s == {"600000.SH": 3}
+    rep = lm.review(bars, 20240104)
+    assert rep["limit_up"] == ["600000.SH"]
+    assert rep["limit_up_open"] == ["000001.SZ"]
+    assert rep["ladder"] == {3: ["600000.SH"]}
+    assert rep["n_scanned"] == 3
+    text = lm.report(rep)
+    assert "涨停 1" in text and "3板x1" in text
+    rep2 = lm.review(bars, 20240101)                          # 首日无前收
+    assert rep2["first_day"] == sorted(["600000.SH", "000001.SZ", "600519.SH"])
