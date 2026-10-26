@@ -9,6 +9,7 @@ import json
 import shutil
 import struct
 import subprocess
+from pathlib import Path
 import sys
 import urllib.error
 from unittest.mock import patch
@@ -22,6 +23,7 @@ from tdx_local import cw_fields, gpcw, lday, kcache, indicators as ind
 from tdx_local import backtest as bt
 from tdx_local import factor as fc
 from tdx_local import limits as lm
+from tdx_local import sectors
 from conftest import ROOT, CW_DIR, GTJA_LDAY
 
 needs_cw = pytest.mark.skipif(not os.path.isdir(CW_DIR), reason=f"无数据目录 {CW_DIR}")
@@ -952,3 +954,39 @@ def test_limits_streaks_and_review():
     assert "涨停 1" in text and "3板x1" in text
     rep2 = lm.review(bars, 20240101)                          # 首日无前收
     assert rep2["first_day"] == sorted(["600000.SH", "000001.SZ", "600519.SH"])
+
+
+# ---------------------------------------------------------------- 板块文件解析(tdx_local.sectors)
+def test_sectors_parse_block_file(tmp_path):
+    f = tmp_path / "spblock.dat"
+    f.write_bytes(
+        "#融资融券\r\n0000001\r\n1600000\r\n2300001\r\n62,000001CNY01\r\n"
+        "######\r\n99\r\n#沪深300,300,,20050408,,,\r\n1600519\r\n".encode("gbk"))
+    blocks = sectors.parse_block_file(f)
+    by_name = {b["name"]: b for b in blocks}
+    assert by_name["融资融券"]["codes"] == ["000001.SZ", "600000.SH", "300001.BJ"]
+    assert by_name["融资融券"]["skipped"] == 3            # 逗号行 + 乱行 + 99
+    assert by_name["沪深300"]["codes"] == ["600519.SH"]   # 名称截到逗号前
+
+
+def test_sectors_read_custom_blocks(tmp_path):
+    (tmp_path / "zxg.blk").write_bytes("0301217\r\n0002407\r\n".encode("ascii"))
+    (tmp_path / "jxg.blk").write_bytes("1601328\r\n1601398".encode("ascii"))
+    (tmp_path / "empty.blk").write_bytes("\r\n")
+    mine = sectors.read_custom_blocks(tmp_path)
+    assert mine["zxg"] == ["301217.SZ", "002407.SZ"]
+    assert mine["jxg"] == ["601328.SH", "601398.SH"]
+    assert mine["empty"] == []
+
+
+def test_sectors_real_machine_files():
+    """本机真实板块文件冒烟(目录缺失自动跳过)。"""
+    t0002 = sectors.default_t0002()
+    if not t0002 or not Path(t0002).is_dir():
+        pytest.skip("本机无 T0002 目录")
+    blocks = sectors.read_hq_blocks(Path(t0002) / "hq_cache")
+    assert len(blocks) > 100
+    name, codes = sectors.find_block(blocks, "融资融券")
+    assert name and len(codes) > 1000 and all("." in c for c in codes[:50])
+    mine = sectors.read_custom_blocks(Path(t0002) / "blocknew")
+    assert isinstance(mine, dict)
