@@ -260,3 +260,54 @@ def test_archive_minutes_offline_wire(tmp_path, monkeypatch, capsys):
     mod.main()                                        # 同数据再跑: 全部去重
     out2 = capsys.readouterr().out
     assert "新增 0 行" in out2
+
+
+# --------------------------------------------------------------- 离线: vipdoc 直读归档
+def _mk_min_file(path, day_words, bars):
+    """合成 vipdoc 分钟文件: 每天 bars 根, 时间词 9:30 起递增, 价格随日递增。"""
+    import struct
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rec = struct.Struct("<HH4IfI2H")
+    with open(path, "wb") as f:
+        for day, dw in enumerate(day_words):
+            for bar in range(bars):
+                tw = 9 * 60 + 30 + bar
+                px = int((10.0 + day) * 100)
+                f.write(rec.pack(dw, tw, px, px, px, px, 10000.0, 100, 0, 0))
+
+
+def test_archive_minutes_vipdoc_offline(tmp_path, monkeypatch, capsys):
+    """直读归档全链路: 拷贝种子 -> 追加增量 -> 幂等 -> GUI 截前端不丢归档。"""
+    mod = _load("archive_minutes_vipdoc")
+    dw1, dw2, dw3 = mod._date_word(20261013), mod._date_word(20261014), mod._date_word(20261015)
+    bars = mod.PERIOD_META["5m"]["bars"]
+    vip = tmp_path / "vipdoc" / "sh" / "fzline" / "sh600519.5"
+
+    _mk_min_file(vip, [dw1, dw2], bars)               # 两天: 种子
+    monkeypatch.setattr(mod, "VIPDOC", str(tmp_path / "vipdoc"))
+    monkeypatch.setattr(mod, "CODES", ["600519.SH"])
+    monkeypatch.setattr(mod, "PERIODS", ("5m",))
+    monkeypatch.setattr(mod, "out_dir", lambda p: tmp_path / "arc" / p)
+    mod.main()
+    assert "新增 96 根" in capsys.readouterr().out
+    arc = tmp_path / "arc" / "5m" / "sh600519.bin"
+    assert arc.stat().st_size == 96 * 32
+
+    _mk_min_file(vip, [dw1, dw2, dw3], bars)          # vipdoc 多出一天: 增量
+    mod.main()
+    assert "新增 48 根" in capsys.readouterr().out
+    assert arc.stat().st_size == 144 * 32
+
+    mod.main()                                        # 无新数据: 幂等
+    assert "新增 0 根" in capsys.readouterr().out
+    assert arc.stat().st_size == 144 * 32
+
+    _mk_min_file(vip, [dw2, dw3], bars)               # 模拟转档截前端: 归档不回缩
+    mod.main()
+    assert "新增 0 根" in capsys.readouterr().out
+    assert arc.stat().st_size == 144 * 32
+
+    counts = mod.day_counts(arc)                      # 按日对账: 三天整, 无留洞
+    assert counts == {dw1: bars, dw2: bars, dw3: bars}
+    bars_out = mod.read_bars(arc, count=1)
+    assert bars_out["Date"][-1] == "20261015" and bars_out["Close"][-1] == 12.0

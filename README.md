@@ -65,7 +65,7 @@ python -c "from tdx_local import read_series; print(read_series('D:/券商tdx/vi
 
 完整示例见 [examples/](examples/):[macd_demo.py](examples/macd_demo.py)(取K线 + Python 自算 MACD)、[financial_demo.py](examples/financial_demo.py)(财务历史序列)、[mainbusi_demo.py](examples/mainbusi_demo.py)(经营分析批量下载 + xlsx 汇总)、[http_call.py](examples/http_call.py)(不依赖 tqcenter 的本地 HTTP 直连)。
 
-**选股/分析配方**(面向不想写代码的使用者,改文件头部参数区即可):[pick_technical.py](examples/pick_technical.py)(技术面选股+写回自定义板块)、[pick_fundamental.py](examples/pick_fundamental.py)(财报增速选股)、[market_overview.py](examples/market_overview.py)(板块强弱/全A估值/两融)、[stock_checkup.py](examples/stock_checkup.py)(单股一键体检,含分红再投总回报);DLL 插件选股的结果可用 [verify_pullback_picker.py](examples/verify_pullback_picker.py) 做 Python 同口径对账。**策略验证与数据积累**:[backtest_picker.py](examples/backtest_picker.py)(把选股策略放到历史上逐日重放, 统计持有 5/20/60 日的分红再投回报与上证超额)、[archive_minutes.py](examples/archive_minutes.py)(每天收盘后跑一次把分钟K增量归档成 CSV, 坚持攒就能突破客户端约 100 天的分钟留存上限)。
+**选股/分析配方**(面向不想写代码的使用者,改文件头部参数区即可):[pick_technical.py](examples/pick_technical.py)(技术面选股+写回自定义板块)、[pick_fundamental.py](examples/pick_fundamental.py)(财报增速选股)、[market_overview.py](examples/market_overview.py)(板块强弱/全A估值/两融)、[stock_checkup.py](examples/stock_checkup.py)(单股一键体检,含分红再投总回报);DLL 插件选股的结果可用 [verify_pullback_picker.py](examples/verify_pullback_picker.py) 做 Python 同口径对账。**策略验证与数据积累**:[backtest_picker.py](examples/backtest_picker.py)(把选股策略放到历史上逐日重放, 统计持有 5/20/60 日的分红再投回报与上证超额)、[archive_minutes.py](examples/archive_minutes.py)(每天收盘后跑一次把分钟K增量归档成 CSV, 坚持攒就能突破客户端约 100 天的分钟留存上限)、[archive_minutes_vipdoc.py](examples/archive_minutes_vipdoc.py)(直读 vipdoc 的二进制归档, 转 GUI 截掉 .5 两年窗口/分钟百天窗口都不影响归档, 支持全市场)。
 
 跑一遍实测用例确认环境(离线组不需要客户端;在线组在 TQ 服务不可达时自动整组跳过):
 
@@ -128,7 +128,8 @@ tdx_quant/
 │   ├── stock_checkup.py          # 配方: 单股一键体检(含分红再投总回报)
 │   ├── verify_pullback_picker.py # 配方: DLL 选股器×Python 同口径交叉对账
 │   ├── backtest_picker.py        # 配方: 策略历史回测(重放/超额统计)
-│   └── archive_minutes.py        # 配方: 分钟线归档(破 100 天留存上限)
+│   ├── archive_minutes.py        # 配方: 分钟线归档(破 100 天留存上限)
+│   └── archive_minutes_vipdoc.py # 配方: vipdoc 直读二进制归档(防转档截窗)
 ├── tests/                        # 实测用例(pytest)
 │   ├── test_offline.py           # 解析/mock 逻辑, 不依赖客户端在线
 │   ├── test_live.py              # TQ 在线接口(服务离线时自动整组跳过)
