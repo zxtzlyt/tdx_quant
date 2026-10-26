@@ -990,3 +990,57 @@ def test_sectors_real_machine_files():
     assert name and len(codes) > 1000 and all("." in c for c in codes[:50])
     mine = sectors.read_custom_blocks(Path(t0002) / "blocknew")
     assert isinstance(mine, dict)
+
+
+# ---------------------------------------------------------------- 扩展市场/事件研究/组合层
+def test_markets_table():
+    from tdx_local import markets as mk
+    assert mk.MARKETS[".HK"][0] == 31 and mk.MARKETS[".US"][0] == 74
+    assert mk.is_a_share("600000.SH") and mk.is_a_share("430047.BJ")
+    assert mk.is_a_share("600000") and not mk.is_a_share("00700.HK")
+    assert not mk.is_a_share("IF2412.CFF")
+
+
+def test_event_study_no_dividend_and_report():
+    from tdx_local import event_study as es
+    # 三只股票, 事件日后线性上涨 -> 事件后漂移为正且随偏移增大
+    dates = list(range(20240101, 20240131))
+    bars = {}
+    for g in range(3):
+        bars[f"S{g}"] = _bt_bars(dates, [10 + (0.1 + g * 0.1) * i for i in range(30)])
+    res = es.study(bars, {c: [20240110] for c in bars}, pre=3, post=5)
+    assert res["n_events"] == 3
+    cm = res["car_mean"]
+    assert cm[0] == pytest.approx(0.0)
+    assert cm[5] > cm[1] > 0                            # 漂移随偏移增大
+    assert res["hit"][5] == pytest.approx(100.0)
+    assert es.report(res).startswith("共 3")
+
+
+def test_event_study_benchmark_excess():
+    from tdx_local import event_study as es
+    dates = list(range(20240101, 20240131))
+    bars = {"AAA": _bt_bars(dates, [10 + 0.2 * i for i in range(30)]),
+            "999999.SH": _bt_bars(dates, [10 + 0.1 * i for i in range(30)])}
+    res = es.study(bars, {"AAA": [20240115]}, pre=2, post=3,
+                   benchmark="999999.SH")
+    assert res["n_events"] == 1
+    assert res["car_mean"][3] > 0                       # 个股强于基准
+
+
+def test_portfolio_weights_corr_curve():
+    from tdx_local import portfolio as pf
+    rets = {"AAA": [1.0, 2.0, 1.5, 0.5],                # 低波动
+            "BBB": [3.0, -2.0, 4.0, -1.0],              # 高波动
+            "CCC": [0.0, 0.0, 0.0, 0.0]}                # 零波动
+    weq = pf.weights_equal(rets)
+    assert weq["AAA"] == pytest.approx(1 / 3)
+    wv = pf.weights_by_inverse_vol(rets)
+    assert wv["AAA"] > wv["BBB"]                        # 低波动权重更大
+    assert sum(wv.values()) == pytest.approx(1.0)
+    cm = pf.corr_matrix(rets)
+    assert cm["AAA"]["AAA"] == pytest.approx(1.0)
+    assert -1.0 <= cm["AAA"]["BBB"] <= 1.0
+    curve = pf.equity_curve(weq, rets)
+    assert len(curve) == 4 and curve[0][1] > 0
+    assert pf.equity_curve({}, rets) == []
