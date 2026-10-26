@@ -1100,3 +1100,53 @@ def test_report_html_render(tmp_path):
     text = out.read_text(encoding="utf-8")
     assert "测试报告" in text and "<svg" in text and "AAA" in text
     assert "分年" in text and "<table>" in text
+
+
+import importlib.util as _ilu
+EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
+
+
+def _load_example(name):
+    spec = _ilu.spec_from_file_location(name, EXAMPLES_DIR / f"{name}.py")
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# ---------------------------------------------------------------- 配方库扩充(纯函数判定)
+def test_pick_pullback_condition():
+    mod = _load_example("pick_pullback")
+    up = [10 + 0.2 * i for i in range(30)]
+    ma10_target = sum(up[-10:]) / 10
+    near = up[:-1] + [ma10_target * 1.01]              # 收盘贴 MA10
+    vols_shrunk = [1000] * 5 + [300]
+    val = {"Close": near, "Volume": vols_shrunk}
+    assert mod.pick(val) is True
+    far = up[:-1] + [up[-1] * 1.10]                    # 远离 MA10 -> False
+    assert mod.pick({"Close": far, "Volume": vols_shrunk}) is False
+    big_vols = [1000] * 5 + [5000]                     # 放量 -> False
+    assert mod.pick({"Close": near, "Volume": big_vols}) is False
+
+
+def test_pick_nshape_condition():
+    mod = _load_example("pick_nshape")
+    # 涨 -> 回调3根(>3%) -> 今日反包前高 + 放量
+    base = [10.0] * 40
+    highs = [10.5] * 40
+    lows = [9.5] * 40
+    closes = [10.0] * 40
+    for i in range(40 - 24, 40 - 4):                   # 16 根上涨到 12.0
+        closes[i] = highs[i] = 10.0 + (i - (40 - 24)) * 0.125
+    peak = 12.0
+    for i in range(40 - 4, 40 - 1):                    # 回调 3 根到 11.5(>3%)
+        closes[i] = highs[i] = peak - (i - (40 - 4)) * 0.25
+        lows[i] = closes[i] - 0.05
+    closes[-1] = max(highs[:-1]) + 0.2                  # 反包(站上真实前高)
+    highs[-1] = closes[-1] + 0.1
+    lows[-1] = peak - 0.1
+    val = {"Open": closes, "High": highs, "Low": lows,
+           "Close": closes, "Volume": [100] * 39 + [500]}
+    assert mod.pick(val) is True
+    closes[-1] = peak - 0.1                            # 未反包 -> False
+    val["Close"] = closes
+    assert mod.pick(val) is False
