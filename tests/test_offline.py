@@ -965,14 +965,14 @@ def test_sectors_parse_block_file(tmp_path):
     blocks = sectors.parse_block_file(f)
     by_name = {b["name"]: b for b in blocks}
     assert by_name["融资融券"]["codes"] == ["000001.SZ", "600000.SH", "300001.BJ"]
-    assert by_name["融资融券"]["skipped"] == 3            # 逗号行 + 乱行 + 99
+    assert by_name["融资融券"]["skipped"] == 2            # 逗号行 + 短数字行
     assert by_name["沪深300"]["codes"] == ["600519.SH"]   # 名称截到逗号前
 
 
 def test_sectors_read_custom_blocks(tmp_path):
     (tmp_path / "zxg.blk").write_bytes("0301217\r\n0002407\r\n".encode("ascii"))
     (tmp_path / "jxg.blk").write_bytes("1601328\r\n1601398".encode("ascii"))
-    (tmp_path / "empty.blk").write_bytes("\r\n")
+    (tmp_path / "empty.blk").write_bytes(b"\r\n")
     mine = sectors.read_custom_blocks(tmp_path)
     assert mine["zxg"] == ["301217.SZ", "002407.SZ"]
     assert mine["jxg"] == ["601328.SH", "601398.SH"]
