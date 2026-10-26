@@ -505,3 +505,24 @@ val = r['Value']['600000.SH']   # {'Date': [...], 'Open': [...], ...}
 18. **market_data 数值为字符串**(标准版): 直接把 Close 喂 indicators/
     backtest 会 TypeError —— 调用方按 stock_checkup 模式先 float 化;
     kcache/lday 通道天然是数值, 无此问题。
+
+## newtick 逐笔数据结构与 ROADMAP P2 执行结论(2026-10-27 凌晨)
+
+19. **vipdoc/newtick 逐笔文件布局**(sz000001 全 112 天对拍):
+    `.vid` 未压缩索引, 16B 头 <IIII>=(version=2, 首日, 末日, 日数), 其后每日
+    22B <IIIdH>=(日期YYYYMMDD, 解压后字节, 压缩后字节, 疑似当日均价f64, 未知)。
+    `.vtc` = **每天一个 zlib 流连续拼接**(非 gzip, 非 gzip 魔数); 第 i 成员
+    解压长 == vid 第 i 日 raw_size 严格相等, 顺序一致; 每段头 4B=日期 u32。
+    已封装 `tdx_local/newtick.py`(read_vid/read_days, 尺寸校验)。
+20. **逐笔记录体未逆向**(段头之后): 时间编码/价格定点/方向字段未知, 已存证
+    样本 hex 于 newtick.py docstring 思路 —— 下一步对拍: 逐笔量合计 vs 日线
+    Volume、末笔价 vs 收盘价、逐笔价与 L1 快照区间。管道已通(能解能切),
+    字段逆向是独立课题, 不阻塞分笔数据的日常归档。
+21. **P2 各项落地结论**: 板块文件=GBK纯文本(sectors.py, 本机 2330 板块);
+    扩展市场=常量表(markets.py, ds 目录空无行情可验); F10 无本地正文缓存
+    (files/f11 仅查看器资源) —— 离线解析死局; 回测 HTML 报告/report_html、
+    数据体检 python -m tdx_local.audit(只 stat 不解压, 全市场归档逐文件
+    解压是天级耗时, 按日对账留给单代码 check 子命令); 盯盘器 watchtower
+    (快照现价字段=Now); 配方库 +3(缩量回踩/N字反包/板块动量榜)。
+    numpy 加速评估: 瓶颈已在优化轮解决(全市场 20s 级), 暂不加复杂度;
+    公式 DLL 台架评估: 需客户端 GUI 手工配合, Python 侧闭环弱, 暂缓。

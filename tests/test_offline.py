@@ -1150,3 +1150,28 @@ def test_pick_nshape_condition():
     closes[-1] = peak - 0.1                            # 未反包 -> False
     val["Close"] = closes
     assert mod.pick(val) is False
+
+
+def test_newtick_read_vid_and_days(tmp_path):
+    import struct
+    import zlib
+    from tdx_local import newtick as nt
+    # 合成: 两天, 每天一个 zlib 成员, 段头 4B 日期
+    d1, d2 = 20260511, 20260512
+    seg1, seg2 = b"\x01" * 64, b"\x02" * 32
+    blob = (struct.pack("<I", d1) + seg1 + struct.pack("<I", d2) + seg2)
+    comp1 = zlib.compress(struct.pack("<I", d1) + seg1)
+    comp2 = zlib.compress(struct.pack("<I", d2) + seg2)
+    (tmp_path / "sz000001.vtc").write_bytes(comp1 + comp2)
+    head = struct.pack("<IIII", 2, d1, d2, 2)
+    days = (struct.pack("<IIIdH", d1, 4 + len(seg1), len(comp1), 11.3, 0)
+            + struct.pack("<IIIdH", d2, 4 + len(seg2), len(comp2), 11.5, 0))
+    (tmp_path / "sz000001.vid").write_bytes(head + days)
+    idx = nt.read_vid(tmp_path / "sz000001.vid")
+    assert idx["version"] == 2 and len(idx["days"]) == 2
+    assert idx["days"][0]["raw_size"] == 68
+    got = nt.read_days(str(tmp_path), "000001.SZ")
+    assert [x["date"] for x in got] == [d1, d2]
+    assert got[0]["data"] == seg1 and got[1]["data"] == seg2
+    assert nt.read_vid(tmp_path / "none.vid") == {}
+    assert nt.read_days(str(tmp_path), "999999.SH") == []
