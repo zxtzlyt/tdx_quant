@@ -49,20 +49,53 @@ def _to_int_date(d):
     return int(str(d).replace("-", ""))
 
 
-def update(client, codes, cache_dir=None, count=-1, batch_size=BATCH) -> dict:
-    """从 TQ 增量拉取日线并合并进缓存, 返回 {code: {added, updated, total}}。
+def _shift_date(d_int, days):
+    """YYYYMMDD(int) 平移 days 自然日 -> YYYYMMDD(str)。"""
+    import datetime as _dt
+    s = str(d_int)
+    base = _dt.date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+    return (base + _dt.timedelta(days=days)).strftime("%Y%m%d")
+
+
+def update(client, codes, cache_dir=None, count=-1, batch_size=BATCH,
+           incremental=False, lookback_days=20) -> dict:
+    """从 TQ 拉取日线并合并进缓存, 返回 {code: {added, updated, total}}。
 
     合并规则: 日期并集; 重叠日以 TQ 新数据为准(缓存语义是"向上游刷新",
     与 lday.sync_lday 的目标侧为准相反 —— 那里目标=官方客户端目录才是权威)。
-    本地无数据的代码记入返回值 "_missing"。count>0 只刷新最近 n 根(增量)。
+    本地无数据的代码记入返回值 "_missing"。
+
+    incremental=True(每日盘后增量): 每批先读批内各 code 的缓存末日期
+    (lday.last_date 只 seek 尾部, 免全量解析), 取最早者回退 lookback_days
+    自然日作 start_time 只拉新段, 重叠日照旧以 TQ 为准覆盖。无缓存文件的
+    代码自动分到全量批(count=-1)。lookback 需覆盖两次同步间隔+长假;
+    数据不会因 lookback 太小而丢 —— start_time 之后的全部会拉, 只是重叠行
+    变多。
     """
     cache_dir = cache_dir or default_dir()
     codes = list(codes)
     stats, missing = {}, {}
-    for i in range(0, len(codes), batch_size):
-        batch = codes[i:i + batch_size]
+    if incremental:
+        have, have_not = [], []
+        for code in codes:
+            (have if path_for(cache_dir, code).exists() else have_not).append(code)
+        batches = [(have[i:i + batch_size],
+                    _shift_date(min(filter(None, (lday.last_date(
+                        str(path_for(cache_dir, c))) for c in have[i:i + batch_size])),
+                        default="19900101"), -lookback_days))
+                   for i in range(0, len(have), batch_size)]
+        batches += [(have_not[i:i + batch_size], None)
+                    for i in range(0, len(have_not), batch_size)]
+    else:
+        batches = [(codes[i:i + batch_size], None)
+                   for i in range(0, len(codes), batch_size)]
+
+    for batch, start_time in batches:
+        if not batch:
+            continue
         r = client.market_data(list(batch), count=count, period="1d",
-                               dividend_type="none", field_list=list(FIELDS))
+                               dividend_type="none", field_list=list(FIELDS),
+                               start_time=start_time or "")
         missing.update(r.get("_missing") or {})
         for code in batch:
             val = (r.get("Value") or {}).get(code)

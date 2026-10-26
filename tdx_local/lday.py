@@ -37,6 +37,23 @@ def read_lday(path: str) -> dict:
     return out
 
 
+def last_date(path: str):
+    """读日线文件最后一条记录的日期 YYYYMMDD(int); 不存在/空文件返回 None。
+
+    定长 32 字节记录按日期升序, 只 seek 文件尾一条, 不解析全文件 ——
+    kcache 增量同步对全市场 5000 只逐个取末日期也在毫秒级。
+    """
+    try:
+        size = os.path.getsize(path)
+        if size < 32:
+            return None
+        with open(path, "rb") as fh:
+            fh.seek((size // 32 - 1) * 32)
+            return REC.unpack(fh.read(32))[0]
+    except OSError:
+        return None
+
+
 def write_lday(path: str, bars: dict) -> int:
     """按日期升序写日线文件(先写临时文件再原子替换)。返回根数。"""
     buf = bytearray()

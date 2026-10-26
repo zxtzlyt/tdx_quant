@@ -536,6 +536,46 @@ def test_kcache_read_many_skips_missing(tmp_path):
     assert set(got) == {"600000.SH"}
 
 
+def test_lday_last_date(tmp_path):
+    p = tmp_path / "sh600000.day"
+    assert lday.last_date(str(p)) is None
+    bars = {20240101: (10.0, 11.0, 9.0, 10.0, 1e4, 100),
+            20240103: (10.0, 11.0, 9.0, 10.5, 1e4, 100)}
+    lday.write_lday(str(p), bars)
+    assert lday.last_date(str(p)) == 20240103      # 尾条即最大日期
+    p.write_bytes(b"")                             # 空文件
+    assert lday.last_date(str(p)) is None
+
+
+def test_kcache_update_incremental(tmp_path):
+    """增量模式: 只发一次批量请求且 start_time = 批内最早末日期回退; 新代码全量批。"""
+    fake = _FakeKlineClient({
+        "600000.SH": _synth_bars([20240101, 20240102, 20240103]),
+        "600036.SH": _synth_bars([20240102, 20240103]),
+        "000858.SZ": _synth_bars([20240104]),      # 新代码, 无缓存 -> 全量批
+    })
+    kcache.update(fake, ["600000.SH", "600036.SH"], cache_dir=str(tmp_path))
+
+    calls = []
+    orig = fake.market_data
+
+    def spy(codes, **kw):
+        calls.append((list(codes), kw.get("start_time") or ""))
+        return orig(codes, **kw)
+
+    fake.market_data = spy
+    stats = kcache.update(fake, ["600000.SH", "600036.SH", "000858.SZ"],
+                          cache_dir=str(tmp_path), incremental=True,
+                          lookback_days=10)
+    # 有缓存的 2 只一批(start_time = min(20240102, 20240103) - 10 天), 新代码单独全量批
+    assert calls[0][0] == ["600000.SH", "600036.SH"]
+    assert calls[0][1] == "20231224"               # min(末日期)=20240103 回退 10 自然日
+    assert calls[1][0] == ["000858.SZ"] and calls[1][1] == ""
+    assert stats["600000.SH"]["added"] == 0        # 无新K线
+    assert stats["000858.SZ"]["added"] == 1
+    assert kcache.read(str(tmp_path), "600036.SH")["Date"] == [20240102, 20240103]
+
+
 # ---------------------------------------------------------------- 回测引擎(tdx_local.backtest)
 def _bt_bars(dates, closes):
     closes = [float(c) for c in closes]
