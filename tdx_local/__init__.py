@@ -31,4 +31,4 @@ __all__ = ["TqClient", "TqError", "backtest", "cw_fields", "indicators", "kcache
            "read_gpcw", "read_series", "scan_reports",
            "single_quarters", "sync_cw", "close_enough", "approx_announce_date",
            "GpcwPlaceholder", "GpcwCorrupt", "GpcwReportGap"]
-__version__ = "1.1.0"
+__version__ = "1.2.0"

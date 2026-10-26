@@ -19,5 +19,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install pytest
-      - run: python -m pytest -v
+      - run: python -m pip install pytest coverage
+      - run: python -m coverage run -m pytest -v
+      - run: python -m coverage report --include='tdx_local/*' -m

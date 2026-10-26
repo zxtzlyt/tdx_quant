@@ -114,9 +114,19 @@ tdx_quant/
 │   ├── cw_fields.py              # 财务字段注册表(锚定校准/单位/单季陷阱/缺失登记)
 │   ├── lday.py                   # 日线文件解析与合并同步
 │   ├── gpcw.py                   # 专业财务文件解析器(历史序列/单季差分/目录同步)
-│   ├── indicators.py             # 技术指标库(MACD/均线/金叉/分红再投收益, 零依赖)
-│   ├── kcache.py                 # 日线本地缓存(lday 格式, 不复权, 截至某日回放)
-│   └── backtest.py               # 选股策略回测(调仓日重放/防未来函数/基准超额)
+│   ├── indicators.py             # 技术指标库(MACD/均线/RSI/KDJ/BOLL/ATR/金叉/分红送转再投)
+│   ├── kcache.py                 # 日线本地缓存(lday 格式, 不复权, 增量同步, 截至某日回放)
+│   ├── backtest.py               # 选股策略回测(调仓日重放/防未来函数/成本/卖出条件/分年)
+│   ├── factor.py                 # 因子评测(RankIC/ICIR/分层/多空价差)
+│   ├── ratios.py                 # 财务衍生比率层(现成槽位+组合注册表)
+│   ├── sectors.py                # 板块文件解析(hq_cache 定义板块+blocknew 自定义板块)
+│   ├── limits.py                 # 涨停/连板判定与复盘(交易所四舍五入口径)
+│   ├── event_study.py            # 事件研究(除息/自定义事件前后漂移)
+│   ├── portfolio.py              # 组合层(波动率倒数权重/相关性/净值曲线)
+│   ├── markets.py                # 扩展市场常量表(港股/美股/期货等 20 市场枚举)
+│   ├── newtick.py                # newtick 逐笔读取层(vid 索引/vtc 逐日 zlib, 实验性)
+│   ├── audit.py                  # 数据体检(python -m tdx_local.audit)
+│   └── report_html.py            # 回测结果 HTML 报告(SVG 净值曲线)
 ├── examples/                     # 可运行示例
 │   ├── macd_demo.py              # 取K线 + Python 自算 MACD
 │   ├── financial_demo.py         # 财务历史序列示例
@@ -128,8 +138,14 @@ tdx_quant/
 │   ├── stock_checkup.py          # 配方: 单股一键体检(含分红再投总回报)
 │   ├── verify_pullback_picker.py # 配方: DLL 选股器×Python 同口径交叉对账
 │   ├── backtest_picker.py        # 配方: 策略历史回测(重放/超额统计)
-│   ├── archive_minutes.py        # 配方: 分钟线归档(破 100 天留存上限)
-│   └── archive_minutes_vipdoc.py # 配方: vipdoc 直读二进制归档(防转档截窗)
+│   ├── archive_minutes.py        # 配方: 分钟线归档(TQ/CSV 版)
+│   ├── archive_minutes_vipdoc.py # 配方: vipdoc 直读二进制归档(gzip, 防转档截窗)
+│   ├── daily_pipeline.py         # 配方: 盘后一条龙(分钟归档+lday合并+日K增量)
+│   ├── limit_up_review.py        # 配方: 涨停/连板复盘(kcache 全池)
+│   ├── watchtower.py             # 配方: 盘中盯盘器(批量快照轮询+阈值提示)
+│   ├── pick_pullback.py          # 配方: 缩量回踩 10 日线选股
+│   ├── pick_nshape.py            # 配方: N 字反包选股
+│   └── pick_sector_momentum.py   # 配方: 板块动量榜
 ├── tests/                        # 实测用例(pytest)
 │   ├── test_offline.py           # 解析/mock 逻辑, 不依赖客户端在线
 │   ├── test_live.py              # TQ 在线接口(服务离线时自动整组跳过)

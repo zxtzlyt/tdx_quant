@@ -1,10 +1,15 @@
 # 核心库按"克隆即用"设计、不发布到 PyPI; 本文件只声明元数据与工具配置。
 [project]
 name = "tdx-quant"
-version = "1.1.0"
+version = "1.2.0"
 description = "通达信本地数据 Python 工具箱: TQ 客户端 / gpcw 财务解析 / lday 日线合并(纯标准库)"
 requires-python = ">=3.9"
 license = "MIT"
+
+[project.optional-dependencies]
+# 预留: numpy 加速通道(2026-10-27 评估: 当前瓶颈已由算法优化解决, 未接线;
+# 装不装都不影响核心库, 全市场回测出现新瓶颈时再启用)。
+numpy = ["numpy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
