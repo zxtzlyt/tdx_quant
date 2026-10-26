@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tdx_local import kcache, limits
 
 # ============================ 参数区(按需修改) ============================
-DATE = 20261024          # 复盘日(YYYYMMDD; kcache 里须有该日及其前一根)
+DATE = 0                # 复盘日 YYYYMMDD; 0 = 自动取池内最新共同交易日
 ST_BY_CODE = {}          # {code: True} 标记 ST(主板按 5% 算); 默认全按非 ST
 # 池子: 空 = kcache 目录全部代码
 CODES = []
@@ -37,12 +37,20 @@ def main() -> None:
         print("kcache 为空: 先跑 examples/daily_pipeline.py 或 kcache.update 建缓存")
         return
     bars = kcache.read_many(cache_dir, codes)
+    date = int(DATE)
+    if not date:                                   # 自动取池内最新共同交易日
+        from collections import Counter
+        counts = Counter(int(str(d)) for b in bars.values() for d in b["Date"])
+        if not counts:
+            print("kcache 为空, 无可复盘数据")
+            return
+        date = max(d for d, n in counts.items())   # 最新日即是(所有池内代码同日历)
     has_date = {c: b for c, b in bars.items()
-                if int(str(DATE)) in [int(str(d)) for d in b["Date"]]}
+                if date in [int(str(d)) for d in b["Date"]]}
     if not has_date:
-        print(f"kcache 里没有 {DATE} 的K线: 先把缓存增量到该日")
+        print(f"kcache 里没有 {date} 的K线: 先把缓存增量到该日")
         return
-    rep = limits.review(has_date, DATE, ST_BY_CODE)
+    rep = limits.review(has_date, date, ST_BY_CODE)
     print(limits.report(rep))
     if rep["limit_up"]:
         print("\n涨停名单:", ",".join(rep["limit_up"]))
