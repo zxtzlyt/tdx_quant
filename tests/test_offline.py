@@ -1044,3 +1044,59 @@ def test_portfolio_weights_corr_curve():
     curve = pf.equity_curve(weq, rets)
     assert len(curve) == 4 and curve[0][1] > 0
     assert pf.equity_curve({}, rets) == []
+
+
+# ---------------------------------------------------------------- 数据体检(tdx_local.audit)与 HTML 报告
+def test_audit_kcache_and_minutes(tmp_path, capsys):
+    from tdx_local import audit
+    import subprocess  # noqa: F401  (保持与文件头 import 一致)
+    dates = [20240101, 20240102, 20240103]
+    kcache.update(_FakeKlineClient({"600000.SH": _synth_bars(dates)}),
+                  ["600000.SH"], cache_dir=str(tmp_path))
+    kc = audit.audit_kcache(str(tmp_path))
+    assert kc["n_files"] == 1 and kc["total_bars"] == 3
+    assert kc["laggards"][0][2] == "600000.SH"
+    rc = audit.run_audit(kcache_dir=str(tmp_path), cw_dir="/nonexistent")
+    out = capsys.readouterr().out
+    assert rc == 0 and "[日K缓存]" in out and "1 只" in out
+
+
+def test_report_html_render(tmp_path):
+    from tdx_local import report_html
+    dates = list(range(20240101, 20240131))
+    bars = {"AAA": _bt_bars(dates, [10 + 0.5 * i for i in range(30)]),
+            "999999.SH": _bt_bars(dates, [10.0] * 30)}
+    res = bt.run(bars, bt.make_rebalances(dates, 30, 10), lambda a: ["AAA"],
+                 horizons=(5,), benchmark="999999.SH")
+    out = tmp_path / "rep.html"
+    report_html.render_backtest_html(res, out, title="测试报告")
+    text = out.read_text(encoding="utf-8")
+    assert "测试报告" in text and "<svg" in text and "AAA" in text
+    assert "分年" in text and "<table>" in text
+
+
+# ---------------------------------------------------------------- 数据体检(tdx_local.audit)与 HTML 报告
+def test_audit_kcache_and_run(tmp_path, capsys):
+    from tdx_local import audit
+    kcache.update(_FakeKlineClient({"600000.SH": _synth_bars([20240101, 20240102])}),
+                  ["600000.SH"], cache_dir=str(tmp_path))
+    kc = audit.audit_kcache(str(tmp_path))
+    assert kc["n_files"] == 1 and kc["total_bars"] == 2
+    assert kc["laggards"][0][2] == "600000.SH"
+    rc = audit.run_audit(kcache_dir=str(tmp_path), cw_dir="/nonexistent")
+    out = capsys.readouterr().out
+    assert rc == 0 and "[日K缓存]" in out and "1 只" in out
+
+
+def test_report_html_render(tmp_path):
+    from tdx_local import report_html
+    dates = list(range(20240101, 20240131))
+    bars = {"AAA": _bt_bars(dates, [10 + 0.5 * i for i in range(30)]),
+            "999999.SH": _bt_bars(dates, [10.0] * 30)}
+    res = bt.run(bars, bt.make_rebalances(dates, 30, 10), lambda a: ["AAA"],
+                 horizons=(5,), benchmark="999999.SH")
+    out = tmp_path / "rep.html"
+    report_html.render_backtest_html(res, out, title="测试报告")
+    text = out.read_text(encoding="utf-8")
+    assert "测试报告" in text and "<svg" in text and "AAA" in text
+    assert "分年" in text and "<table>" in text
