@@ -21,8 +21,9 @@ examples/{macd_demo, stock_checkup, pick_technical}.py 三处且口径不一,
 """
 
 __all__ = ["sma", "ma", "ema", "macd", "macd_state", "is_golden_cross",
-           "is_bull_align", "is_volume_surge", "total_return_with_dividends",
-           "max_drawdown"]
+           "is_bull_align", "is_volume_surge", "is_volume_shrink", "amplitude",
+           "rsi", "kdj", "boll", "atr",
+           "total_return_with_dividends", "max_drawdown"]
 
 
 def sma(values, n):
@@ -157,3 +158,133 @@ def max_drawdown(closes):
         if peak > 0:
             worst = min(worst, c / peak - 1)
     return worst * 100
+
+
+# ---------------------------------------------------------------- 2026-10-27 扩展
+def _wilder_smooth(values, n, init=50.0):
+    """A股 SMA(X,N,1) 平滑(Wilder): y = y' + (x-y')/n; 初值 init。
+
+    None 位置原样输出且不更新状态(等长对齐); EMA 类指标依赖历史长度,
+    窗口起点不同末端值会略有差异 —— 与通达信全历史递推相比, 短窗口末端
+    差异通常在第 2 位小数之后。
+    """
+    out, y, started = [], init, False
+    for v in values:
+        if v is None:
+            out.append(None)
+            continue
+        y = y + (v - y) / n if started else init + (v - init) / n
+        started = True
+        out.append(y)
+    return out
+
+
+def rsi(closes, n=14):
+    """RSI(n) 序列(Wilder 平滑, A股软件口径): 前 n 个位置为 None。
+
+    分母为 0(单边)时返回 100/0 极值。>70 超买 / <30 超卖是常见用法。
+    """
+    m = len(closes)
+    if m < n + 1:
+        return [None] * m
+    gains = losses = 0.0
+    for i in range(1, n + 1):
+        ch = closes[i] - closes[i - 1]
+        gains += max(ch, 0.0)
+        losses += max(-ch, 0.0)
+    ag, al = gains / n, losses / n
+
+    def _val(ag, al):
+        if al == 0:
+            return 100.0 if ag > 0 else 50.0      # 平盘 0/0 取中性 50
+        return 0.0 if ag == 0 else 100.0 - 100.0 / (1.0 + ag / al)
+
+    out = [None] * n
+    out.append(_val(ag, al))
+    for i in range(n + 1, m):
+        ch = closes[i] - closes[i - 1]
+        ag = (ag * (n - 1) + max(ch, 0.0)) / n
+        al = (al * (n - 1) + max(-ch, 0.0)) / n
+        out.append(_val(ag, al))
+    return out
+
+
+def kdj(highs, lows, closes, n=9, smooth=3):
+    """KDJ(n, smooth) -> (k, d, j) 三条等长序列(前 n-1 个位置为 None)。
+
+    RSV = (C-Ln)/(Hn-Ln)*100; K=SMA(RSV,smooth,1), D=SMA(K,smooth,1),
+    J=3K-2D。一字板(Hn=Ln)当日 RSV 取 50(中性); 递推初值 50。
+    """
+    m = len(closes)
+    rsv = []
+    for i in range(m):
+        if i < n - 1:
+            rsv.append(None)
+            continue
+        hn, ln = max(highs[i - n + 1:i + 1]), min(lows[i - n + 1:i + 1])
+        rsv.append(50.0 if hn == ln else (closes[i] - ln) / (hn - ln) * 100.0)
+    k = _wilder_smooth(rsv, smooth, 50.0)
+    d = _wilder_smooth(k, smooth, 50.0)
+    j = [None if (a is None or b is None) else 3.0 * a - 2.0 * b for a, b in zip(k, d)]
+    return k, d, j
+
+
+def boll(closes, n=20, k=2):
+    """BOLL(n,k) -> (mid, upper, lower) 三条等长序列(前 n-1 个位置为 None)。
+
+    mid=MA(n), upper/lower = mid ± k×总体标准差(STDP, A股软件口径);
+    滚动平方和实现 O(n)。方差负浮点误差钳为 0(常数序列 up=mid=lo)。
+    """
+    m = len(closes)
+    mid = sma(closes, n)
+    upper, lower = [None] * m, [None] * m
+    s = ss = 0.0
+    for i, v in enumerate(closes):
+        s += v
+        ss += v * v
+        if i >= n:
+            s -= closes[i - n]
+            ss -= closes[i - n] * closes[i - n]
+        if i >= n - 1:
+            mean = s / n
+            sd = max(ss / n - mean * mean, 0.0) ** 0.5
+            upper[i] = mean + k * sd
+            lower[i] = mean - k * sd
+    return mid, upper, lower
+
+
+def atr(highs, lows, closes, n=14):
+    """ATR(n) 序列(Wilder 平滑): 前 n 个位置为 None。
+
+    TR = max(H-L, |H-昨收|, |L-昨收|); 首日 TR=H-L。波动过滤/止损常用
+    (如收盘跌破 ATR×k 通道)。
+    """
+    m = len(closes)
+    tr = [highs[0] - lows[0]] if m else []
+    for i in range(1, m):
+        pc = closes[i - 1]
+        tr.append(max(highs[i] - lows[i], abs(highs[i] - pc), abs(lows[i] - pc)))
+    out = [None] * (n - 1)
+    if m < n:
+        return [None] * m
+    y = sum(tr[:n]) / n
+    out.append(y)
+    for v in tr[n:]:
+        y = y + (v - y) / n
+        out.append(y)
+    return out
+
+
+def is_volume_shrink(volumes, ratio=0.7, base=5):
+    """今日成交量 < 前 base 日均量的 ratio 倍(缩量, 配合回调企稳类策略)。"""
+    if len(volumes) < base + 1:
+        return False
+    avg = sum(float(v) for v in volumes[-base - 1:-1]) / base
+    return avg > 0 and float(volumes[-1]) < avg * ratio
+
+
+def amplitude(high, low, prev_close):
+    """单日振幅%: (high-low)/prev_close*100; prev_close<=0 返回 None。"""
+    if not prev_close or prev_close <= 0:
+        return None
+    return (high - low) / prev_close * 100.0

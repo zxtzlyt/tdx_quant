@@ -745,3 +745,103 @@ def test_bt_costs_default_zero_is_unchanged():
     m = res["summary"][5]
     assert m["n"] >= 1 and m["win"] == pytest.approx(100.0)
     assert m["avg"] > 0                            # 单调上涨股必有正收益
+
+
+# ---------------------------------------------------------------- 指标库扩展(2026-10-27)
+def test_ind_rsi_extremes_and_length():
+    up = [10.0 + i for i in range(30)]                 # 单调涨 -> RSI=100
+    r = ind.rsi(up)
+    assert len(r) == 30 and r[:14] == [None] * 14
+    assert r[-1] == pytest.approx(100.0)
+    dn = [30.0 - i for i in range(30)]
+    assert ind.rsi(dn)[-1] == pytest.approx(0.0)
+    assert ind.rsi([10.0] * 3) == [None] * 3           # 数据不足全 None
+    flat = [10.0] * 20                                 # 不涨不跌: gain=loss=0 -> 0
+    assert ind.rsi(flat)[-1] == pytest.approx(50.0)   # 平盘 0/0 -> 中性
+
+
+def test_ind_kdj_doji_and_shape():
+    # 一字板: H=L=C -> RSV 恒 50, K/D/J 收敛 50
+    n = 20
+    flat = [10.0] * n
+    k, d, j = ind.kdj(flat, flat, flat)
+    assert len(k) == len(d) == len(j) == n
+    assert k[:8] == [None] * 8
+    assert k[-1] == pytest.approx(50.0) and d[-1] == pytest.approx(50.0)
+    assert j[-1] == pytest.approx(50.0)
+    # 正常数据: 末端 J = 3K-2D
+    highs = [10 + (i % 3) * 0.5 for i in range(n)]
+    lows = [10 - (i % 3) * 0.5 for i in range(n)]
+    closes = [10.0] * n
+    k2, d2, j2 = ind.kdj(highs, lows, closes)
+    assert j2[-1] == pytest.approx(3 * k2[-1] - 2 * d2[-1])
+
+
+def test_ind_boll_constant_and_linear():
+    flat = [10.0] * 25
+    mid, up, lo = ind.boll(flat)
+    assert mid[-1] == up[-1] == lo[-1] == pytest.approx(10.0)   # 常数: sd=0
+    seq = [float(i + 1) for i in range(25)]                     # 1..25
+    mid2, up2, lo2 = ind.boll(seq)
+    # 末端窗口 6..25: mean=15.5, 总体 sd = sqrt( sum(x^2)/20 - mean^2 )
+    mean = sum(range(6, 26)) / 20
+    sd = (sum(x * x for x in range(6, 26)) / 20 - mean * mean) ** 0.5
+    assert mid2[-1] == pytest.approx(mean)
+    assert up2[-1] == pytest.approx(mean + 2 * sd)
+    assert lo2[-1] == pytest.approx(mean - 2 * sd)
+    assert mid2[:19] == [None] * 19
+
+
+def test_ind_atr_constant_range():
+    n = 30
+    highs = [11.0] * n
+    lows = [9.0] * n
+    closes = [10.0] * n
+    a = ind.atr(highs, lows, closes)
+    assert len(a) == n and a[:13] == [None] * 13
+    assert a[13] == pytest.approx(2.0)                 # 种子=前14个TR均值=2
+    assert a[-1] == pytest.approx(2.0)                 # 常数TR -> 收敛保持
+    assert ind.atr([11.0] * 5, [9.0] * 5, [10.0] * 5) == [None] * 5
+
+
+def test_ind_volume_shrink_and_amplitude():
+    assert ind.is_volume_shrink([100] * 5 + [30]) is True    # 30 < 100*0.7
+    assert ind.is_volume_shrink([100] * 5 + [200]) is False
+    assert ind.is_volume_shrink([100] * 3) is False          # 数据不足
+    assert ind.amplitude(11.0, 9.0, 10.0) == pytest.approx(20.0)
+    assert ind.amplitude(11.0, 9.0, 0) is None
+
+
+# ---------------------------------------------------------------- 财务比率层(tdx_local.ratios)
+def _mk_records(slots):
+    rec = [0.0] * 300
+    for fn, v in slots.items():
+        rec[fn - 1] = v
+    return {20241231: rec, 20240930: rec[:]}           # 两个报告期
+
+
+def test_ratios_compute_ready_made_and_derived():
+    from tdx_local import ratios
+    recs = _mk_records({74: 100.0, 96: 10.0, 107: 15.0, 271: 50.0, 72: 80.0,
+                          17: 5.0, 40: 100.0, 8: 20.0, 238: 10.0, 202: 91.9,
+                          281: 34.2, 210: 25.0, 183: 15.5, 184: 8.8})
+    t = ratios.compute(recs, ["毛利率", "ROE加权", "归母净利率", "净现比",
+                              "存货占比", "每股归母权益"])
+    row = t[20241231]
+    assert row["毛利率"] == pytest.approx(91.9)         # 现成槽位直取
+    assert row["ROE加权"] == pytest.approx(34.2)
+    assert row["归母净利率"] == pytest.approx(10.0)     # 10/100 自算
+    assert row["净现比"] == pytest.approx(1.5)          # 15/10
+    assert row["存货占比"] == pytest.approx(5.0)
+    assert row["每股归母权益"] == pytest.approx(5.0)
+    assert ratios.latest(t, "净现比") == pytest.approx(1.5)
+
+
+def test_ratios_zero_denominator_and_unknown_name():
+    from tdx_local import ratios
+    recs = _mk_records({96: 10.0, 74: 0.0, 107: 5.0})  # 营收 0 -> 归母净利率 None
+    t = ratios.compute(recs, ["归母净利率", "净现比"])
+    assert t[20241231]["归母净利率"] is None
+    assert t[20241231]["净现比"] == pytest.approx(0.5)
+    with pytest.raises(LookupError):
+        ratios.compute(recs, ["不存在的比率"])
