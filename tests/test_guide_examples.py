@@ -284,6 +284,7 @@ def test_archive_minutes_vipdoc_offline(tmp_path, monkeypatch, capsys):
     vip = tmp_path / "vipdoc" / "sh" / "fzline" / "sh600519.5"
 
     _mk_min_file(vip, [dw1, dw2], bars)               # 两天: 种子
+    monkeypatch.setattr(mod, "USE_GZIP", False)       # 钉住裸 bin 语义
     monkeypatch.setattr(mod, "VIPDOC", str(tmp_path / "vipdoc"))
     monkeypatch.setattr(mod, "CODES", ["600519.SH"])
     monkeypatch.setattr(mod, "PERIODS", ("5m",))
@@ -351,7 +352,9 @@ def test_daily_pipeline_offline_wire(tmp_path, monkeypatch, capsys):
     assert "[OK  ] 分钟归档" in out and "+96根" in out
     assert "[OK  ] lday合并" in out and "新复制1" in out
     assert "[OK  ] 日K增量" in out and "1只" in out
-    assert (tmp_path / "arc" / "5m" / "sh600519.bin").stat().st_size == 2 * bars * 32
+    arc_gz = tmp_path / "arc" / "5m" / "sh600519.bin.gz"
+    assert arc_gz.exists()
+    assert len(dp.amv.read_bars(arc_gz)["Close"]) == 2 * bars   # gz 归档读回无损
     assert (tmp_path / "vipdoc" / "sh" / "lday" / "sh600036.day").exists()
     assert (kcache_dir / "sh600000.day").stat().st_size >= 5 * 32   # 增到 5 根
 
@@ -373,3 +376,38 @@ def test_daily_pipeline_failure_isolated(tmp_path, monkeypatch, capsys):
     assert rc == 0                                  # vip 缺文件计入 missing, 不算失败
     out = capsys.readouterr().out
     assert "分钟归档" in out and "日K增量" in out
+
+
+def test_archive_minutes_vipdoc_gzip(tmp_path, monkeypatch, capsys):
+    """gzip 归档全链路: 种子 -> 成员追加增量 -> 幂等 -> 读回对账(多成员可解)。"""
+    mod = _load("archive_minutes_vipdoc")
+    dw1, dw2, dw3 = mod._date_word(20261013), mod._date_word(20261014), mod._date_word(20261015)
+    bars = mod.PERIOD_META["5m"]["bars"]
+    vip = tmp_path / "vipdoc" / "sh" / "fzline" / "sh600519.5"
+
+    _mk_min_file(vip, [dw1, dw2], bars)
+    monkeypatch.setattr(mod, "USE_GZIP", True)
+    monkeypatch.setattr(mod, "VIPDOC", str(tmp_path / "vipdoc"))
+    monkeypatch.setattr(mod, "CODES", ["600519.SH"])
+    monkeypatch.setattr(mod, "PERIODS", ("5m",))
+    monkeypatch.setattr(mod, "out_dir", lambda p: tmp_path / "arc" / p)
+    mod.main()
+    assert "新增 96 根" in capsys.readouterr().out
+    arc = tmp_path / "arc" / "5m" / "sh600519.bin.gz"
+    assert arc.exists() and mod._is_gz(arc)
+
+    _mk_min_file(vip, [dw1, dw2, dw3], bars)          # vipdoc 多出一天: 成员追加
+    mod.main()
+    assert "新增 48 根" in capsys.readouterr().out
+    mod.main()                                        # 幂等
+    assert "新增 0 根" in capsys.readouterr().out
+
+    assert mod._last_stamp(arc) == (dw3, mod.PERIOD_META["5m"]["bars"] - 1 + 9 * 60 + 30)
+    bars_out = mod.read_bars(arc)                     # 多成员整读
+    assert len(bars_out["Close"]) == 3 * bars
+    assert bars_out["Date"][-1] == "20261015"
+    counts = mod.day_counts(arc)
+    assert counts == {dw1: bars, dw2: bars, dw3: bars}  # 压缩流按日对账无损
+    import gzip
+    raw = gzip.open(arc, "rb").read()
+    assert len(raw) == 3 * bars * 32 and len(raw) % 32 == 0

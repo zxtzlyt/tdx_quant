@@ -34,6 +34,9 @@ CODES = [                # 关注池; 命令行加 all 或改成 None = 全市�
     "999999.SH", "399001.SZ", "880001.SH",
     "600000.SH", "600519.SH", "000001.SZ", "300750.SZ",
 ]
+# 归档压缩: gzip 多成员追加(每次追加一个成员, 合法 gzip, 读时自动解);
+# 全市场裸 bin 体量约 gzip 的 2-3 倍, 默认开。旧裸 .bin 归档仍可读(读取按魔数识别)。
+USE_GZIP = True
 # 输出目录: 环境变量 TDX_MIN_ARCHIVE, 缺省 <仓库根>/minute_archive/<周期>/
 # 全市场体量参考(2026-10-15): 5m 种子约 8GB; 1m 约 45GB, 且每交易日约 +0.4GB
 # =========================================================================
@@ -59,8 +62,27 @@ def vip_path(vipdoc, code, period):
 
 
 def arc_path(code, period):
+    """归档文件路径(USE_GZIP=True 为 .bin.gz; 读取端对两种后缀都兼容)。"""
     num, mkt = code.split(".")
-    return out_dir(period) / f"{mkt.lower()}{num}.bin"
+    ext = ".bin.gz" if USE_GZIP else ".bin"
+    return out_dir(period) / f"{mkt.lower()}{num}{ext}"
+
+
+def _is_gz(path):
+    """按魔数判断是否 gzip(与后缀无关, 旧裸 .bin 与新 .bin.gz 都能读)。"""
+    try:
+        with open(path, "rb") as f:
+            return f.read(2) == b"\x1f\x8b"
+    except OSError:
+        return False
+
+
+def _raw(path):
+    """归档/vipdoc 文件 -> 原始 32B 记录流(gzip 自动解压)。"""
+    if _is_gz(path):
+        import gzip
+        return gzip.open(path, "rb").read()
+    return Path(path).read_bytes()
 
 
 def all_codes(vipdoc, period):
@@ -77,8 +99,32 @@ def all_codes(vipdoc, period):
     return sorted(codes)
 
 
+def _last_member_stamp(path):
+    """gzip 多成员文件: 只解最后一个成员取末 32B(最后追加段即最新数据)。
+
+    反向找成员头魔数可能伪命中(压缩数据里也会出现 1f8b08), 从尾往前
+    逐候选尝试解压, 第一个 CRC 通过的即最后一个完整成员 —— 崩溃截断的
+    成员解压失败会被自然跳过(末 stamp 偏旧 -> 下次多拉重叠段, 归档侧
+    按 stamp 过滤不会重复写入)。
+    """
+    import zlib
+    data = Path(path).read_bytes()
+    pos = data.rfind(b"\x1f\x8b\x08")
+    while pos >= 0:
+        try:
+            out = zlib.decompressobj(16 + zlib.MAX_WBITS).decompress(data[pos:])
+            if len(out) >= 32:
+                return REC.unpack_from(out, len(out) - 32)[:2]
+        except zlib.error:
+            pass
+        pos = data.rfind(b"\x1f\x8b\x08", 0, pos)
+    return None
+
+
 def _last_stamp(path):
     """末根 (日期词, 时间词); 空信封/长度不对返回 None(视为无有效归档)。"""
+    if _is_gz(path):
+        return _last_member_stamp(path)
     size = path.stat().st_size
     if size < 32 or size % 32:
         return None
@@ -94,8 +140,14 @@ def append_new(vip_file, arc_file, day_bars) -> int:
         return 0
     if not arc_file.exists() or _last_stamp(arc_file) is None:
         arc_file.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(vip_file, arc_file)
-        return size // 32
+        data = Path(vip_file).read_bytes()
+        if str(arc_file).endswith(".gz"):
+            import gzip
+            with open(arc_file, "wb") as f:
+                f.write(gzip.compress(data, mtime=0))   # mtime=0: 压缩流可复现
+        else:
+            shutil.copyfile(vip_file, arc_file)
+        return len(data) // 32
 
     d_arc, t_arc = _last_stamp(arc_file)
     if _last_stamp(vip_file) <= (d_arc, t_arc):
@@ -122,8 +174,15 @@ def append_new(vip_file, arc_file, day_bars) -> int:
         fresh = f.read()
     rows = [REC.unpack_from(fresh, off) for off in range(0, len(fresh), 32)]
     rows = [r for r in rows if (r[0], r[1]) > (d_arc, t_arc)]   # 乱序/重复兜底
-    with open(arc_file, "ab") as f:
-        f.write(b"".join(REC.pack(*r) for r in rows))
+    if rows:
+        if str(arc_file).endswith(".gz"):
+            import gzip
+            with gzip.GzipFile(fileobj=open(arc_file, "ab"), mode="ab",
+                               mtime=0) as f:      # 多成员追加(合法 gzip)
+                f.write(b"".join(REC.pack(*r) for r in rows))
+        else:
+            with open(arc_file, "ab") as f:
+                f.write(b"".join(REC.pack(*r) for r in rows))
     return len(rows)
 
 
@@ -132,7 +191,7 @@ def read_bars(path, count=None, end_date=None):
 
     end_date=20261015 取截至该日的数据; count 截取末 n 根; 都不传取全量。
     """
-    data = Path(path).read_bytes()
+    data = _raw(path)
     rows = [REC.unpack_from(data, off)
             for off in range(0, len(data) - len(data) % 32, 32)]
     if end_date is not None:
@@ -165,7 +224,7 @@ def _date_int(word):
 
 def day_counts(path):
     """{日期词: 根数} —— 留洞对账用, 完整一天应恰为 bars 根。"""
-    data = Path(path).read_bytes()
+    data = _raw(path)
     out = {}
     for off in range(0, len(data) - len(data) % 32, 32):
         d = REC.unpack_from(data, off)[0]
@@ -193,6 +252,29 @@ def do_check(code, periods):
               f"非整日({bars}根) {odd if odd else '无'}")
 
 
+def _pack_gz(periods, codes=None):
+    """一次性迁移: 归档目录里裸 .bin -> .bin.gz(原子替换, 幂等)。"""
+    import gzip
+    for period in periods:
+        folder = out_dir(period)
+        if not folder.is_dir():
+            continue
+        n = 0
+        for p in sorted(folder.glob("*.bin")):
+            if codes is not None and p.stem not in codes:
+                continue
+            if (p.with_suffix(".bin.gz")).exists():
+                continue
+            raw = p.read_bytes()
+            tmp = str(p) + ".gz.tmp"
+            with open(tmp, "wb") as f:
+                f.write(gzip.compress(raw, mtime=0))
+            os.replace(tmp, str(p) + ".gz")
+            p.unlink()
+            n += 1
+        print(f"[{period}] 迁移 {n} 个文件 -> .bin.gz (目录 {folder})")
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = sys.argv[1:]
@@ -206,6 +288,9 @@ def main():
         args = args[1:]
     if args and args[0] == "check":
         do_check(args[1], periods)
+        return
+    if args and args[0] == "pack":
+        _pack_gz(periods, None if args[1:] == ["all"] else (args[1:] or None))
         return
 
     for period in periods:
