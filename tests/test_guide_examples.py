@@ -436,6 +436,6 @@ def test_watchtower_poll_round(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert n1 == 1 and n2 == 2, (n1, n2, out)
     assert "600000.SH 13.50" in out and "涨速" in out
-    assert baselines["600519.SH"] == 1500.0
+    assert baselines["600519.SH"] == pytest.approx(1530.0)  # 二轮价已*1.02
     assert "000001.SZ" not in baselines
 
