@@ -311,3 +311,65 @@ def test_archive_minutes_vipdoc_offline(tmp_path, monkeypatch, capsys):
     assert counts == {dw1: bars, dw2: bars, dw3: bars}
     bars_out = mod.read_bars(arc, count=1)
     assert bars_out["Date"][-1] == "20261015" and bars_out["Close"][-1] == 12.0
+
+
+def test_daily_pipeline_offline_wire(tmp_path, monkeypatch, capsys):
+    """盘后一条龙端到端: 分钟归档 + lday 合并 + 日K增量三步串行, 汇总表全 OK。"""
+    dp = _load("daily_pipeline")
+    amv = dp.amv
+    bars = amv.PERIOD_META["5m"]["bars"]
+    dw1, dw2, dw3 = amv._date_word(20261013), amv._date_word(20261014), amv._date_word(20261015)
+    # 1) 假 vipdoc 分钟文件(两天种子, 归档目录 tmp/arc)
+    vip = tmp_path / "vipdoc" / "sh" / "fzline" / "sh600519.5"
+    _mk_min_file(vip, [dw1, dw2], bars)
+    monkeypatch.setattr(amv, "out_dir", lambda p: tmp_path / "arc" / p)
+    monkeypatch.setattr(dp, "VIPDOC", str(tmp_path / "vipdoc"))
+    monkeypatch.setattr(dp, "MINUTE_CODES", ["600519.SH"])
+    monkeypatch.setattr(dp, "MINUTE_PERIODS", ("5m",))
+    monkeypatch.setattr(dp, "MINUTE_ALL", False)
+    # 2) 券商 lday 源 -> 官方侧(仅一个新文件)
+    gtja_lday = tmp_path / "gtja" / "sh" / "lday"
+    gtja_lday.mkdir(parents=True)
+    dp.lday.write_lday(str(gtja_lday / "sh600036.day"),
+                       {20240101: (10.0, 11.0, 9.0, 10.0, 1e4, 100)})
+    monkeypatch.setattr(dp, "RUN_LDAY_SYNC", True)
+    monkeypatch.setattr(dp, "GTJA_LDAY_SRC", str(tmp_path / "gtja"))
+    monkeypatch.setattr(dp, "GTJA_LDAY_DST", str(tmp_path / "vipdoc"))
+    # 3) kcache: 预置一只缓存文件 -> 反推代码; 假客户端给新日期 = 增量
+    monkeypatch.setattr(dp.kcache, "default_dir", lambda: str(tmp_path / "kcache"))
+    kcache_dir = tmp_path / "kcache"
+    dates = list(range(20240101, 20240106))
+    fake = _FakeBtTq({"600000.SH": _bt_bars(dates, [10 + 0.1 * i for i in range(len(dates))])})
+    dp.kcache.update(fake, ["600000.SH"], cache_dir=str(kcache_dir),
+                     count=3)                          # 预置: 末日期 20240103
+    fake.bars["600000.SH"] = _bt_bars(dates, [10 + 0.1 * i for i in range(len(dates))])
+    monkeypatch.setattr(dp, "TqClient", lambda: fake)
+
+    rc = dp.main()
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "[OK  ] 分钟归档" in out and "+96根" in out
+    assert "[OK  ] lday合并" in out and "新复制1" in out
+    assert "[OK  ] 日K增量" in out and "1只" in out
+    assert (tmp_path / "arc" / "5m" / "sh600519.bin").stat().st_size == 2 * bars * 32
+    assert (tmp_path / "vipdoc" / "sh" / "lday" / "sh600036.day").exists()
+    assert (kcache_dir / "sh600000.day").stat().st_size >= 5 * 32   # 增到 5 根
+
+
+def test_daily_pipeline_failure_isolated(tmp_path, monkeypatch, capsys):
+    """分钟归档失败不拖垮日K增量: 汇总一行 FAIL 一行 OK, 退出码 1。"""
+    dp = _load("daily_pipeline")
+    monkeypatch.setattr(dp, "RUN_MINUTES", True)
+    monkeypatch.setattr(dp, "VIPDOC", str(tmp_path / "nowhere"))    # vipdoc 不存在
+    monkeypatch.setattr(dp, "MINUTE_CODES", ["600519.SH"])
+    monkeypatch.setattr(dp, "MINUTE_PERIODS", ("5m",))
+    monkeypatch.setattr(dp, "RUN_LDAY_SYNC", False)
+    monkeypatch.setattr(dp.kcache, "default_dir", lambda: str(tmp_path / "kcache"))
+    dates = [20240101, 20240102]
+    fake = _FakeBtTq({"600000.SH": _bt_bars(dates, [10.0, 11.0])})
+    monkeypatch.setattr(dp, "TqClient", lambda: fake)
+
+    rc = dp.main()                                  # MINUTE_ALL=False + 缺文件 = 0 根但 OK
+    assert rc == 0                                  # vip 缺文件计入 missing, 不算失败
+    out = capsys.readouterr().out
+    assert "分钟归档" in out and "日K增量" in out
