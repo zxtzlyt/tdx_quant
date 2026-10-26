@@ -107,18 +107,23 @@ def is_volume_surge(volumes, ratio=1.5, base=5):
     return avg > 0 and float(volumes[-1]) > avg * ratio
 
 
-def total_return_with_dividends(closes, dates, dividends, years=5):
+def total_return_with_dividends(closes, dates, dividends, splits=None, years=5):
     """近 years 年: (纯价格回报%, 分红再投总回报%, 分红次数)。
 
     dividends: {除息日YYYYMMDD(int或str): 每股税前派息元} —— 即
-    TqClient.divid_factors 的返回形态。买入日起每个除息日把现金分红
-    按当日收盘价再投入(LOCAL_NOTES 茅台口径: 12.49 倍 vs hexin 12.41 互证)。
+    TqClient.divid_factors 的返回形态。splits: {除息日: 每股送转股数} ——
+    即 TqClient.divid_splits 的返回形态(送转必须进模型, 否则"10送10"标的
+    除权日价格腰斩而股本没补, 总回报严重低估)。除权除息日处理顺序按真实
+    业务: 现金按送转前股本计 -> 股本×(1+送转) -> 现金按当日收盘(除权价)再投。
+    买入日起每个除息日把现金分红按当日收盘价再投入(LOCAL_NOTES 茅台口径:
+    12.49 倍 vs hexin 12.41 互证)。
     窗口锚定在数据末端(末端年份-years), 本地数据起点不足 years 年也能对齐。
     不修改传入的 dividends(2026-10-05 抽取时修正了原实现原地 pop 的副作用)。
     """
     if not closes:
         return None, None, 0
     divs = {str(k): v for k, v in dividends.items()}   # int/str 日期键统一
+    spl = {str(k): v for k, v in (splits or {}).items()}
     cut = int(str(dates[-1])[:4]) - years
     idx0 = next((i for i, d in enumerate(dates) if int(str(d)[:4]) >= cut), 0)
     seg_d, seg_c = dates[idx0:], closes[idx0:]
@@ -128,13 +133,16 @@ def total_return_with_dividends(closes, dates, dividends, years=5):
 
     shares, cash, n_div = 1.0, 0.0, 0
     for d, c in zip(seg_d, seg_c):
+        split = spl.get(str(d), 0.0)
         div = divs.get(str(d), 0.0)
         if div:
             n_div += 1
-            cash += shares * div
-            if c > 0:
-                shares += cash / c
-                cash = 0.0
+            cash += shares * div       # 派息基数是登记日(送转前)股本
+        if split:
+            shares *= 1.0 + split      # 送转后股本
+        if div and c > 0:
+            shares += cash / c         # 现金按除权日收盘再投
+            cash = 0.0
     total_ret = (shares * seg_c[-1] + cash) / seg_c[0] - 1
     return price_ret, total_ret * 100, n_div
 

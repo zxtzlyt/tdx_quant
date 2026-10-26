@@ -212,9 +212,9 @@ class TqClient:
         """分红送配 -> {除息日YYYYMMDD: 每股税前派息(元)}。
 
         2026-09-29 实测: 返回为列式结构(result.Date/Type/Value 平行数组, 非官方
-        文档的行式 dict); Bonus 列为每10股派息(元), 此处已换算为每股; 服务端忽略
-        start_time/end_time(恒返回全历史)。Type=11 扩缩股/15 重新调整的行 Bonus
-        恒为 0, 不影响本口径; 需要送配股比例请自行走 call() 原始接口。
+        文档的行式 dict); row[0] 为每10股派息(元), 此处已换算为每股; 服务端忽略
+        start_time/end_time(恒返回全历史)。行结构详见 divid_splits(2026-10-27
+        实测补全); 送转比例请用 divid_splits, 不要自行解析。
         """
         r = self.call("get_divid_factors", stock_code=stock_code,
                       start_time=start_time, end_time=end_time)
@@ -225,6 +225,30 @@ class TqClient:
                 out[str(d)] = float(row[0]) / 10.0
             except (TypeError, ValueError, IndexError):
                 continue
+        return out
+
+    def divid_splits(self, stock_code: str) -> dict:
+        """分红送配 -> {除权除息日YYYYMMDD: 每股送转股数(送股+转增)}。
+
+        2026-10-27 实测(茅台/万科全历史对照): Value row 结构为
+        [每10股派息, 每10股送股, 每10股转增, 配股相关列], 且全部行 Type=1 ——
+        20060519 茅台行 ['3.00','0.00','10.00','0.00'] 即"10派3转10",
+        19910601 万科行 ['0.00','4.40','0.00',5.00] 即"10送4.4"。此前笔记
+        "需找 Type=11 扩缩股行"的结论作废: 送转数据就在 Type=1 行里。
+        本口径返回 (row[1]+row[2])/10, 股本乘数 = 1 + 该值。
+        row[3] 为配股相关列(比例/价格口径未定), 配股需股东再出资, 与无偿
+        送转不同, 全收益模型按惯例忽略(收益口径偏保守)。
+        """
+        r = self.call("get_divid_factors", stock_code=stock_code)
+        dates, rows = r.get("Date") or [], r.get("Value") or []
+        out = {}
+        for d, row in zip(dates, rows):
+            try:
+                ratio = (float(row[1]) + float(row[2])) / 10.0
+            except (TypeError, ValueError, IndexError):
+                continue
+            if ratio:
+                out[str(d)] = ratio
         return out
 
     def snapshot(self, stock_code: str, field_list=None) -> dict:

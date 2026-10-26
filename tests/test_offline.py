@@ -617,3 +617,91 @@ def test_bt_run_dividend_callable_and_report():
     assert calls.count("AAA") == 1             # callable 逐股只调一次(记忆化)
     text = bt.report(res)
     assert "持有期" in text and "胜率" in text and "5日" in text
+
+
+def test_total_return_with_splits():
+    """10送10+派息: 不带送转的模型把腰斩当亏损, 带送转才是真总回报。"""
+    dates = [20240101, 20240102, 20240103]
+    closes = [100.0, 50.0, 51.0]               # 除权日 100 -> 50(10送10)
+    divs, spl = {"20240102": 0.3}, {"20240102": 1.0}
+    p, t, n = ind.total_return_with_dividends(closes, dates, divs, spl, years=5)
+    assert (p, n) == (pytest.approx(-49.0), 1)
+    # 1股 -> 派0.3元 + 变2股 -> 再投 0.3/50 -> (2.006*51)/100 - 1
+    assert t == pytest.approx(2.306, abs=1e-3)
+    _, t0, _ = ind.total_return_with_dividends(closes, dates, divs, years=5)
+    assert t0 == pytest.approx(-48.694, abs=1e-3)   # 不带送转: 亏损假象
+    # 送转在窗口外不产生影响
+    _, t2, _ = ind.total_return_with_dividends(closes, dates, divs,
+                                               {"20200101": 1.0}, years=5)
+    assert t2 == pytest.approx(t0)
+
+
+def test_bt_forward_return_splits_and_costs():
+    dates = [20240101, 20240102, 20240103]
+    closes = [100.0, 50.0, 51.0]
+    r = bt.forward_return(dates, closes, 0, 2, {"20240102": 0.3},
+                          {"20240102": 1.0})
+    assert r == pytest.approx(2.306, abs=1e-3)
+    # 成本: 毛+20% -> (1.2*0.99/1.01 - 1)
+    r2 = bt.forward_return([1, 2], [100.0, 110.0], 0, 1,
+                           cost_in=0.01, cost_out=0.01)
+    assert r2 == pytest.approx((1.10 * 0.99 / 1.01 - 1) * 100)
+    # 无成本路径数值不受影响(向后兼容)
+    assert bt.forward_return([1, 2], [100.0, 110.0], 0, 1) == pytest.approx(10.0)
+
+
+def test_bt_forward_return_sell_rule():
+    bars = {"Date": [1, 2, 3, 4], "Close": [100.0, 105.0, 103.0, 104.0]}
+
+    def rule(asof, held_days):
+        cl = asof["Close"]
+        return len(cl) >= 3 and cl[-1] < cl[-2]    # 收盘跌破前日即卖
+
+    r = bt.forward_return(bars["Date"], bars["Close"], 0, 3,
+                          sell_rule=rule, bars=bars)
+    assert r == pytest.approx(3.0)                 # 第3根 103 提前卖, 非 104
+    assert bt.forward_return(bars["Date"], bars["Close"], 0, 3) == \
+        pytest.approx(4.0)
+    with pytest.raises(TypeError):
+        bt.forward_return(bars["Date"], bars["Close"], 0, 3, sell_rule=rule)
+
+
+def test_bt_run_sell_rule_yearly_curve():
+    dates = list(range(20240101, 20240131))
+    up = _bt_bars(dates, [10 + 0.5 * i for i in range(30)])
+    bars = {"AAA": up, "999999.SH": _bt_bars(dates, [10.0] * 30)}
+
+    def sell_at_15(asof, held_days):
+        return held_days >= 2 and max(asof["Date"]) >= 20240115
+
+    res = bt.run(bars, bt.make_rebalances(dates, 30, 10), lambda a: ["AAA"],
+                 horizons=(5,), benchmark="999999.SH", sell_rule=sell_at_15)
+    assert res["picks"]
+    for p in res["picks"]:
+        sd = p["sell_date"].get(5)
+        if sd is None:
+            continue
+        if p["early"].get(5):
+            assert sd - p["date"] < 5              # 提前触发必早于到期
+        else:
+            assert sd - p["date"] == 5             # 未触发自然到期
+    # 分年与曲线结构
+    y = res["yearly"][5]
+    assert all(set(m) >= {"n", "win", "avg", "avg_excess"} for m in y.values())
+    curve = res["curve"][5]
+    assert curve and all(nav > 0 for _, nav in curve)
+    assert curve == sorted(curve)                  # 卖出日升序
+    assert bt.report_yearly(res).startswith("分年")
+
+
+def test_bt_costs_default_zero_is_unchanged():
+    """默认无成本时, 新版 run 与旧版逐笔收益一致(兼容回归)。"""
+    dates = list(range(20240101, 20240131))
+    bars = {"AAA": _bt_bars(dates, [10 + 0.1 * i for i in range(30)]),
+            "999999.SH": _bt_bars(dates, [10.0] * 30)}
+    rebal = bt.make_rebalances(dates, 30, 10)
+    res = bt.run(bars, rebal, lambda a: ["AAA"], horizons=(5,),
+                 benchmark="999999.SH")
+    m = res["summary"][5]
+    assert m["n"] >= 1 and m["win"] == pytest.approx(100.0)
+    assert m["avg"] > 0                            # 单调上涨股必有正收益

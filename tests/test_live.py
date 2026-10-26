@@ -350,3 +350,42 @@ def test_market_data_end_time_count_window():
     assert len(norm) == 10
     assert norm[-1] == 20240628          # 末根恰为 end_time(2024-06-28 为交易日)
     assert all(d <= 20240628 for d in norm)
+
+
+# ---------------------------------------------------------------- 送转股口径(2026-10-27)
+def test_live_divid_splits_structure():
+    """真值锚定: 送转比例就在 Type=1 行的 row[1]送/row[2]转(旧"找Type=11"结论作废)。
+
+    2026-10-27 实测: 601888 20170616 = 10转10, 300750 20230426 = 10转8,
+    000333 20140430 = 10转15; row[3] 为配股相关列(全收益口径忽略配股)。
+    """
+    assert TQ.divid_splits("601888.SH").get("20170616") == pytest.approx(1.0)
+    assert TQ.divid_splits("300750.SZ").get("20230426") == pytest.approx(0.8)
+    assert TQ.divid_splits("000333.SZ").get("20140430") == pytest.approx(1.5)
+    assert isinstance(TQ.divid_factors("601888.SH").get("20170616"), float)
+
+
+def test_live_split_total_return_matches_front_adjusted():
+    """带送转总回报 vs 前复权单窗口收益互证(单窗口前复权可信, 见 README 避坑3)。
+
+    2026-10-27 四案例实测差 < 1.2pp(601318/601888/300750/000333); 不带送转的
+    旧模型在 10转10 标的上误差近百个百分点。本地无该股当年数据时跳过。
+    """
+    from tdx_local import indicators as ind
+    cases = [("601888.SH", "20170101", "20171231"),
+             ("300750.SZ", "20230101", "20231231"),
+             ("000333.SZ", "20140101", "20141231")]
+    for code, a, b in cases:
+        TQ.refresh_kline([code])           # 从盘上 lday 喂缓存(客户端只落地看过的窗口)
+        rn = TQ.market_data([code], start_time=a, end_time=b, period="1d",
+                            dividend_type="none")["Value"].get(code)
+        if not rn or not rn.get("Date"):
+            pytest.skip(f"本地无 {code} {a[:4]} 年K线")
+        rf = TQ.market_data([code], start_time=a, end_time=b, period="1d",
+                            dividend_type="front")["Value"][code]
+        div, spl = TQ.divid_factors(code), TQ.divid_splits(code)
+        closes = [float(c) for c in rn["Close"]]
+        _, total, _ = ind.total_return_with_dividends(
+            closes, [str(d) for d in rn["Date"]], div, spl, years=15)
+        fr = (float(rf["Close"][-1]) / float(rf["Close"][0]) - 1) * 100
+        assert total == pytest.approx(fr, abs=1.5), code

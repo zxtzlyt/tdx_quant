@@ -469,3 +469,39 @@ val = r['Value']['600000.SH']   # {'Date': [...], 'Open': [...], ...}
 12. **示例容错覆盖盘点**: 全部用 TqClient 的示例入口统一 TqError 包装
     (本轮补齐 mainbusi_demo); financial_demo 走 gpcw 文件解析不碰 TQ、
     http_call 用自带 TqHttpError —— 不属同型, 不强加。
+
+## 送转股口径修复与回测成本/卖出条件(2026-10-27, ROADMAP P0 执行)
+
+13. **get_divid_factors 的 Value row 真实结构**(推翻 2026-09-29 笔记):
+    row = [每10股派息, 每10股送股, 每10股转增, 配股相关列], 且**全部行
+    Type=1** —— 此前"扩缩股要找 Type=11 行"的结论作废。真值锚定:
+    601888 20170616 行 [x,0,10,x] = 10转10; 000333 20140430 = 10转15;
+    300750 20230426 = 10转8; 万科 1991-2000 的送股在 row[1](4.4/4.5/7.5)。
+    row[3] 疑为配股比例/价格(口径未定), 配股需股东再出资, 全收益模型按
+    惯例忽略(偏保守)。已封装 `TqClient.divid_splits()` -> {日期: 每股送转}。
+14. **不带送转的总回报是错的**: "10送10"除权日价格腰斩而旧模型不补股本,
+    601888 2017 全年真实总回报 +103%, 旧模型只显示价格涨幅的一半量级。
+    修复后 `total_return_with_dividends(..., splits=)` / backtest
+    `splits_by_code` 处理顺序按真实业务: 派息按送转前股本 -> 股本×(1+送转)
+    -> 现金按除权日收盘再投。**四案例互证**(带送转总回报 vs 前复权单窗口
+    区间收益): 601888 差 -1.11pp, 601318 +0.13pp, 300750 -0.02pp,
+    000333 +0.53pp(在线用例 test_live_split_total_return_matches_front_
+    adjusted)。
+15. **refresh_kline 喂历史窗口**: 客户端只落地"看过的标的/窗口", 茅台
+    2006 年窄窗口只回 1 根 —— `refresh_kline([code])` 一次即从盘上
+    vipdoc lday(lday 合并过的全历史)喂进 K线缓存, 2005-2006 回满 292 根。
+    在线锚定用例依赖此步。(茅台 2006 本地 lday 仍有洞, 锚定案例改用
+    601888/601318/300750/000333。)
+16. **backtest 交易成本**: `run(commission=, stamp_tax=, slippage=)` 折算
+    cost_in = slippage+commission, cost_out = slippage+commission+stamp_tax
+    (印花税仅卖出); 净收益 = 毛×(1-cost_out)/(1+cost_in)-1, 全仓进出近似。
+    A股建议 A_SHARE_COSTS: 佣金万2.5双边 + 印花税万5卖出。基准不含成本,
+    超额天然保守。默认全零, 逐笔收益与旧版一致(兼容回归测试)。
+17. **卖出条件 sell_rule(asof, held_days) -> bool**: 持有期内逐日检查
+    (截至当日含收盘的 window 切片), 触发提前卖出(horizon 仍为上限);
+    需同时传 bars。picks 每笔新增 sell_date/early, 报告新增
+    `report_yearly()` 分年表与 result["curve"] 批次净值(每批等权、全额
+    再投近似, 期内不换仓)。
+18. **market_data 数值为字符串**(标准版): 直接把 Close 喂 indicators/
+    backtest 会 TypeError —— 调用方按 stock_checkup 模式先 float 化;
+    kcache/lday 通道天然是数值, 无此问题。
