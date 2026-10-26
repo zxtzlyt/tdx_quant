@@ -411,3 +411,31 @@ def test_archive_minutes_vipdoc_gzip(tmp_path, monkeypatch, capsys):
     import gzip
     raw = gzip.open(arc, "rb").read()
     assert len(raw) == 3 * bars * 32 and len(raw) % 32 == 0
+
+
+def test_watchtower_poll_round(tmp_path, monkeypatch, capsys):
+    """盯盘器一轮检查: 上下限与涨速触发, 停牌股跳过。"""
+    mod = _load("watchtower")
+
+    class FakeTq:
+        prices = {"600000.SH": 13.50, "600519.SH": 1500.0}
+
+        def snapshot_batch(self, codes):
+            self.prices["600519.SH"] *= 1.02                # 每轮 +2% -> 涨速触发
+            return {"600000.SH": {"Now": str(self.prices["600000.SH"])},
+                    "600519.SH": {"Now": str(self.prices["600519.SH"])},
+                    "000001.SZ": {}}                        # 停牌: 无 Now
+
+    watch = {"600000.SH": {"high": 13.0},
+             "600519.SH": {"speed_pct": 1.0},
+             "000001.SZ": {"high": 5.0}}
+    baselines = {}
+    fake = FakeTq()
+    n1 = mod.poll_round(fake, watch, baselines, beep=False)  # 首轮只建基线
+    n2 = mod.poll_round(fake, watch, baselines, beep=False)  # 二轮涨速生效
+    out = capsys.readouterr().out
+    assert n1 == 1 and n2 == 2, (n1, n2, out)
+    assert "600000.SH 13.50" in out and "涨速" in out
+    assert baselines["600519.SH"] == 1500.0
+    assert "000001.SZ" not in baselines
+
