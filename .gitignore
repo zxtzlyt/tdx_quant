@@ -35,7 +35,17 @@ kcache/
 kcache_min/
 picks_csv/
 
+# 分钟归档(由 archive_minutes_vipdoc 生成, 体量大仅本机保存)
+minute_archive/
+
 # 本机工具与未公开资料
 tdx_docs/
 .zcodeignore
 docs/选股分析指南.md
+
+# 通达信官方下载器输出(下载工具被指到仓库根, 非本仓库代码)
+down/
+logs/
+ADVERT.TXT
+downit5.cfg
+datatool.ini
